@@ -1,0 +1,26 @@
+# Exclude files/dirs not needed in the Docker image
+node_modules/
+dist/
+coverage/
+.git/
+.husky/
+.env
+.env.*
+!.env.example
+*.log
+npm-debug.log*
+openspec/
+.atl/
+README.md
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+.eslintrc.cjs
+.eslintignore
+.prettierrc
+.prettierignore
+.editorconfig
+tsconfig*.json
+vitest.config.ts
+tests/
+*.md

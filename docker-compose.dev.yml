@@ -1,0 +1,41 @@
+version: '3.9'
+
+services:
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: inventory
+      POSTGRES_PASSWORD: inventory
+      POSTGRES_DB: inventory
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U inventory -d inventory']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    image: node:20-alpine
+    working_dir: /app
+    # Install deps, run Prisma migrations, then start the dev server with hot reload
+    command: sh -c "npm install && npx prisma migrate deploy && npm run dev"
+    env_file: .env
+    environment:
+      # Overrides DATABASE_URL from .env to use the Docker service name
+      DATABASE_URL: postgresql://inventory:inventory@db:5432/inventory
+    ports:
+      - '3000:3000'
+    volumes:
+      - .:/app
+      # Prevent host node_modules from overriding container's
+      - /app/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
