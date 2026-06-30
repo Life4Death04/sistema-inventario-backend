@@ -15,14 +15,35 @@ export const ERROR_CODES = {
   /** Email or password does not match any active user. */
   INVALID_CREDENTIALS: 'INVALID_CREDENTIALS',
 
+  /** Authenticated user account is inactive. */
+  USER_INACTIVE: 'USER_INACTIVE',
+
   /** JWT access token has expired — client should refresh. */
   TOKEN_EXPIRED: 'TOKEN_EXPIRED',
 
-  /** JWT signature is invalid or the token is malformed. */
-  TOKEN_INVALID: 'TOKEN_INVALID',
+  /**
+   * JWT access token signature is invalid or the token is malformed.
+   * Alias: TOKEN_INVALID (design §5) — same semantic, spec uses INVALID_TOKEN.
+   */
+  INVALID_TOKEN: 'INVALID_TOKEN',
+
+  /** @deprecated Use INVALID_TOKEN. Kept for backward-compat with design §5 refs. */
+  TOKEN_INVALID: 'INVALID_TOKEN',
 
   /** No Bearer token was provided on a protected route. */
-  UNAUTHORIZED: 'UNAUTHORIZED',
+  MISSING_TOKEN: 'MISSING_TOKEN',
+
+  /** @deprecated Use MISSING_TOKEN. Kept for backward-compat with prior Slice 3 code. */
+  UNAUTHORIZED: 'MISSING_TOKEN',
+
+  /** Refresh token cookie is absent on POST /api/auth/refresh. */
+  MISSING_REFRESH_TOKEN: 'MISSING_REFRESH_TOKEN',
+
+  /** Refresh token JWT is invalid, expired, revoked, or not found in DB. */
+  INVALID_REFRESH_TOKEN: 'INVALID_REFRESH_TOKEN',
+
+  /** Refresh token owner is inactive or no longer exists in DB. */
+  USER_INACTIVE_OR_DELETED: 'USER_INACTIVE_OR_DELETED',
 
   /** Token is valid but the role is insufficient for this route. */
   FORBIDDEN: 'FORBIDDEN',
