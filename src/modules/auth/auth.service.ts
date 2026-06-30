@@ -53,7 +53,7 @@ export class AuthService {
 
   /**
    * Hash a plain-text password.
-   * Cost factor comes from env.BCRYPT_COST (default 10, validated 8-14 by Zod).
+   * Cost factor comes from env.BCRYPT_COST (default 10, validated 10-14 by Zod).
    * Never log or store the plain-text value.
    */
   async hashPassword(plain: string): Promise<string> {

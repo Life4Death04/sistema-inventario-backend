@@ -139,7 +139,7 @@ sistema-inventario-backend/
 | `JWT_REFRESH_SECRET`   | **yes**  | —                       | Secret for signing refresh tokens. Minimum 32 characters. Must differ from access secret. |
 | `JWT_ACCESS_TTL`       | no       | `15m`                   | Access token lifetime (ms-style, e.g. `15m`, `1h`)                                        |
 | `JWT_REFRESH_TTL`      | no       | `7d`                    | Refresh token lifetime (e.g. `7d`, `30d`)                                                 |
-| `BCRYPT_COST`          | no       | `10`                    | bcrypt work factor (8–14). 10 ≈ 100ms on dev hardware.                                    |
+| `BCRYPT_COST`          | no       | `10`                    | bcrypt work factor (10–14). 10 ≈ 100ms on dev hardware. Minimum 10 per auth spec.         |
 | `FRONTEND_URL`         | no       | `http://localhost:5173` | Allowed CORS origin for the frontend                                                      |
 | `RATE_LIMIT_MAX`       | no       | `100`                   | Max requests per IP per window                                                            |
 | `RATE_LIMIT_WINDOW_MS` | no       | `900000`                | Rate-limit window in milliseconds (default: 15 min)                                       |

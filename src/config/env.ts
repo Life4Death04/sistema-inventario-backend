@@ -24,8 +24,8 @@ const envSchema = z.object({
   JWT_ACCESS_TTL: z.string().default('15m'),
   JWT_REFRESH_TTL: z.string().default('7d'),
 
-  // Password hashing
-  BCRYPT_COST: z.coerce.number().int().min(8).max(14).default(10),
+  // Password hashing — spec requires minimum cost factor of 10.
+  BCRYPT_COST: z.coerce.number().int().min(10).max(14).default(10),
 
   // CORS
   FRONTEND_URL: z.string().url().default('http://localhost:5173'),
