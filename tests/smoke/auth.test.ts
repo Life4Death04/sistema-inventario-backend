@@ -161,6 +161,19 @@ function makeAccessToken(userId: string, role: string): string {
   );
 }
 
+/**
+ * Build a valid refresh JWT with a given sub and jti.
+ * Used to craft tokens whose DB row we can then control independently
+ * (e.g. remove from the store to simulate reuse, or tie to an inactive user).
+ */
+function makeRefreshToken(userId: string, jti: string): string {
+  return jwt.sign(
+    { sub: userId, jti },
+    process.env['JWT_REFRESH_SECRET'] ?? 'dev-refresh-secret-minimum-32-chars-ok',
+    { algorithm: 'HS256', expiresIn: '7d' },
+  );
+}
+
 function getCookieValue(
   headers: Record<string, string | string[] | undefined>,
   name: string,
@@ -398,6 +411,85 @@ describe('Auth endpoints smoke tests', () => {
       expect(res.status).toBe(401);
       const body = res.body as ErrorBody;
       expect(body.error).toBe('INVALID_REFRESH_TOKEN');
+    });
+
+    it('(e) refresh reuse detection — returns 401 and revokes ALL user tokens', async () => {
+      /**
+       * Scenario: an already-rotated (or stolen) refresh token is presented.
+       * The JWT is cryptographically valid but the DB row is gone (jti not found).
+       * The controller MUST call revokeAllUserRefreshTokens(userId) as a
+       * compromise defense and return 401 INVALID_REFRESH_TOKEN.
+       *
+       * We craft a refresh JWT whose jti we never insert into refreshTokenStore,
+       * so findRefreshTokenByJti returns null — the reuse-detection branch.
+       */
+      const { prisma } = await import('../../src/shared/utils/prisma.js');
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const mockRtUpdateMany = vi.mocked(prisma.refreshToken.updateMany);
+
+      // Add another active token for the same user so the compromise sweep has
+      // concrete state to revoke, not just a mocked method call.
+      const siblingTokenRow = makeRefreshTokenRow(MOCK_USER_ACTIVE.id);
+      refreshTokenStore.set(siblingTokenRow.id, siblingTokenRow);
+
+      const otherUserTokenRow = makeRefreshTokenRow(MOCK_USER_OPERATOR.id);
+      refreshTokenStore.set(otherUserTokenRow.id, otherUserTokenRow);
+
+      // A jti that does NOT exist in the mock store — simulates an already-rotated token.
+      const orphanJti = 'cuid-orphan-jti-never-stored';
+      const orphanToken = makeRefreshToken(MOCK_USER_ACTIVE.id, orphanJti);
+
+      const res = await request(app)
+        .post('/api/auth/refresh')
+        .set('Cookie', `refresh_token=${orphanToken}`);
+
+      expect(res.status).toBe(401);
+      const body = res.body as ErrorBody;
+      expect(body.error).toBe('INVALID_REFRESH_TOKEN');
+
+      // revokeAllUserRefreshTokens must have been called with the owner's userId.
+      const updateManyCalls = mockRtUpdateMany.mock.calls as unknown as Array<
+        [
+          {
+            where: { userId: string; revoked: boolean };
+            data: { revoked: boolean; revokedAt: Date };
+          },
+        ]
+      >;
+      expect(
+        updateManyCalls.some(
+          ([call]) =>
+            call.where.userId === MOCK_USER_ACTIVE.id &&
+            call.where.revoked === false &&
+            call.data.revoked === true,
+        ),
+      ).toBe(true);
+      expect(refreshTokenStore.get(siblingTokenRow.id)?.revoked).toBe(true);
+      expect(refreshTokenStore.get(otherUserTokenRow.id)?.revoked).toBe(false);
+    });
+
+    it('(f) refresh with inactive user — returns 401 USER_INACTIVE_OR_DELETED', async () => {
+      /**
+       * Scenario: the refresh JWT is valid and the DB row exists and is not revoked,
+       * but the user record fetched from DB has active=false (or is null).
+       * The controller MUST return 401 USER_INACTIVE_OR_DELETED.
+       *
+       * We insert a row for MOCK_USER_INACTIVE (active=false) into the store,
+       * craft a matching token, and send it to /refresh.
+       */
+      // Create a DB row for the inactive user in the mock store.
+      const inactiveTokenRow = makeRefreshTokenRow(MOCK_USER_INACTIVE.id);
+      refreshTokenStore.set(inactiveTokenRow.id, inactiveTokenRow);
+
+      const inactiveToken = makeRefreshToken(MOCK_USER_INACTIVE.id, inactiveTokenRow.id);
+
+      const res = await request(app)
+        .post('/api/auth/refresh')
+        .set('Cookie', `refresh_token=${inactiveToken}`);
+
+      expect(res.status).toBe(401);
+      const body = res.body as ErrorBody;
+      expect(body.error).toBe('USER_INACTIVE_OR_DELETED');
     });
   });
 
