@@ -79,17 +79,17 @@ Chain strategy: size-exception
 - [x] 1.3 Create `tsconfig.json` with `strict: true`, `noUncheckedIndexedAccess: true`, `target: "ES2022"`, `module: "NodeNext"`, `moduleResolution: "NodeNext"`, `outDir: "dist"`, `rootDir: "src"`. Create `tsconfig.build.json` excluding tests. Files: `tsconfig.json`, `tsconfig.build.json`.
 - [x] 1.4 Configure ESLint 9 with TypeScript plugin. Configure Prettier. Add `.eslintignore` and `.prettierignore`. Files: `.eslintrc.cjs`, `.prettierrc`, `.eslintignore`, `.prettierignore`.
 - [x] 1.5 Install Husky and lint-staged. Create `.husky/pre-commit` that runs lint-staged (eslint --fix, prettier --write, tsc --noEmit on staged `.ts` files). Files: `.husky/pre-commit`, `package.json` (lint-staged config).
-- [ ] 1.6 Create `vitest.config.ts` with two projects (`unit` and `integration`) referencing `tests/setup.ts`. Files: `vitest.config.ts`.
-- [ ] 1.7 Create `tests/setup.ts` with global setup stubs (PrismaClient disconnect, env guard). Files: `tests/setup.ts`.
+- [x] 1.6 Create `vitest.config.ts` with two projects (`unit` and `integration`) referencing `tests/setup.ts`. Files: `vitest.config.ts`.
+- [x] 1.7 Create `tests/setup.ts` with global setup stubs (PrismaClient disconnect, env guard). Files: `tests/setup.ts`.
 - [x] 1.8 Create `.env.example` documenting all 14 variables: `NODE_ENV`, `PORT`, `DATABASE_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `JWT_ACCESS_TTL`, `JWT_REFRESH_TTL`, `FRONTEND_URL`, `RATE_LIMIT_MAX`, `RATE_LIMIT_WINDOW_MS`, `LOG_LEVEL`, `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, `SEED_ADMIN_FULLNAME`. Files: `.env.example`.
 - [x] 1.9 Create `src/config/env.ts` — Zod schema that parses `process.env`, enforces `JWT_ACCESS_SECRET` min 32 chars, exits with `code 1` and readable message on failure. Export typed `env` object. Files: `src/config/env.ts`.
 - [x] 1.10 Create empty barrel stubs for folder tree: `src/app.ts` (exports `app`, no `listen()`), `src/server.ts` (imports `app`, calls `app.listen(env.PORT)`). Create empty index files for `src/shared/{errors,middleware,utils,logger,validation,pagination}/`. Create empty dirs `src/modules/{auth,health}/`. Files: directory tree.
-- [ ] 1.11 Create `src/shared/logger/index.ts` — Pino instance with `redact: ['req.headers.authorization', 'req.body.password', 'req.cookies.refresh_token']`, level from `env.LOG_LEVEL`, `pino-pretty` in dev. Files: `src/shared/logger/index.ts`.
+- [x] 1.11 Create `src/shared/logger/index.ts` — Pino instance with `redact: ['req.headers.authorization', 'req.body.password', 'req.cookies.refresh_token']`, level from `env.LOG_LEVEL`, `pino-pretty` in dev. Files: `src/shared/logger/index.ts`.
 - [x] 1.12 Create `Dockerfile` multi-stage: `deps` stage (install only prod deps), `build` stage (tsc), `runtime` stage (node:20-alpine, USER node, copy dist + node_modules). Files: `Dockerfile`.
 - [x] 1.13 Create `docker-compose.dev.yml` with `app` service (node:20, bind mount, `npm run dev`, depends_on db) and `db` service (postgres:15-alpine, named volume, healthcheck `pg_isready`). Files: `docker-compose.dev.yml`.
 - [x] 1.14 Create `.dockerignore`, `.gitignore`. Files: `.dockerignore`, `.gitignore` (pre-existing, verified adequate).
 - [x] 1.15 Write `README.md` covering all 6 required sections: Setup, Scripts table (13 scripts), Folder structure, Env vars table, Auth flow summary, Backup note (RNF9 — pg_dump, not backend responsibility). Files: `README.md`.
-- [ ] 1.16 Run `git init`, create initial commit with all scaffold files. Tag as `scaffold-base` (N/A — repo was pre-initialized; 6 Slice 1 commits created instead).
+- [x] 1.16 Run `git init`, create initial commit with all scaffold files. Tag as `scaffold-base` (N/A — repo was pre-initialized; 8 Slice 1 commits created instead; Slice 1 complete).
 
 **Acceptance** (spec `project-scaffold`):
 - `npm run typecheck` exits 0.
