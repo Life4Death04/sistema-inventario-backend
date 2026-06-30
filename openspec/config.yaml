@@ -16,29 +16,46 @@ context:
   domain: Pharmaceutical inventory (products, categories, suppliers, movements, replenishment)
   roles: ADMIN | MANAGER | OPERATOR
   api_base: /api
-  auth: JWT (to be decided in propose phase)
+  auth: JWT — access token (HS256, 15 min, Bearer) + refresh token (HS256, 7 days, httpOnly cookie)
   frontend: ../sistema-inventario-frontend (React 18 + TanStack Query + Zustand)
   data_model: >
     Users, Categories, Suppliers, Products, ProductSuppliers (many-to-many),
-    InventoryMovements (IN/OUT/ADJUSTMENT), ReplenishmentRequests + Items
-  stack_decision: pending — stack selection required in first sdd-propose
+    InventoryMovements (IN/OUT/ADJUSTMENT), Alerts, ReplenishmentRequests + Items,
+    RefreshTokens (JWT DB allowlist)
+  stack_decision: confirmed — backend-foundations change (2026-06-30)
+  stack:
+    framework: Express 4.19.x
+    orm: Prisma 5.x
+    database: PostgreSQL 15-alpine
+    language: TypeScript 5.4.x (strict)
+    runtime: Node.js 20 LTS
+    validation: Zod 3.23.x
+    logging: pino 9 + pino-http 10
+    auth_tokens: jsonwebtoken 9.x (HS256)
+    hashing: bcrypt 5.x (cost 10)
+    http_security: helmet 7, cors 2, express-rate-limit 7
 
-strict_tdd: false  # Greenfield: no test runner configured yet. Revisit in first sdd-propose.
+strict_tdd: false  # Explicit decision: greenfield foundations, smoke/unit tests with mocked Prisma.
 
 testing:
-  status: TO_BE_DECIDED
+  status: CONFIGURED
   note: >
-    Project is greenfield with no code. Test runner, layers, and coverage strategy
-    must be chosen alongside the stack in the first proposal phase.
-  runner: null
+    Stack confirmed in backend-foundations change (2026-06-30). 60/60 tests passing.
+    Real DB integration lane deferred — currently using mocked Prisma for smoke tests.
+    Strict TDD disabled; pre-commit enforces lint + typecheck.
+  runner: vitest
+  version: "1.x"
+  command: npm test
   layers:
-    unit: unknown
-    integration: unknown
-    e2e: unknown
-  coverage: unknown
-  linter: unknown
-  type_checker: null  # TypeScript expected — confirm when stack is chosen
-  formatter: unknown
+    unit: "tests/unit/*.test.ts — pure service/helper logic, no I/O"
+    integration: "tests/smoke/*.test.ts — Supertest against app, Prisma mocked"
+    e2e: deferred — requires disposable Postgres lane (future change)
+  coverage: not enforced in foundations; add threshold in future change
+  linter: "ESLint 9 (legacy config: .eslintrc.cjs) + Prettier 3"
+  type_checker: "tsc --noEmit (TypeScript 5.4.x strict)"
+  formatter: "Prettier 3 (.prettierrc)"
+  known_warnings:
+    - "prisma/seed.ts: 2 no-console warnings (acceptable; seed script)"
 
 phases:
   propose:
