@@ -19,6 +19,7 @@
     "test:watch": "vitest",
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",
+    "db:create-admin": "tsx prisma/scripts/create-admin.ts",
     "db:reset": "prisma migrate reset",
     "db:studio": "prisma studio",
     "prepare": "husky"
