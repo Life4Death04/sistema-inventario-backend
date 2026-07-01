@@ -37,6 +37,7 @@ import { ERROR_CODES } from './shared/errors/errorCodes.js';
 import { healthRouter } from './modules/health/health.routes.js';
 import { authRouter } from './modules/auth/auth.routes.js';
 import { usersRouter } from './modules/users/users.routes.js';
+import { categoriesRouter } from './modules/categories/categories.routes.js';
 
 const app = express();
 
@@ -100,6 +101,7 @@ app.use('/api', apiRateLimiter);
 app.use('/api/health', healthRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
+app.use('/api/categories', categoriesRouter);
 
 // ── 404 fallback (after all routes, before error handler) ───────────────────
 app.use(notFound);
