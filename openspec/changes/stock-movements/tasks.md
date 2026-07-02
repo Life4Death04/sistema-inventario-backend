@@ -22,10 +22,10 @@
 
 ## Phase 3: HTTP Surface
 
-- [ ] 3.1 Create `src/modules/inventory-movements/inventory-movements.controller.ts`; parse params/query/body with the module schemas and map service results to 201/200 JSON responses.
-- [ ] 3.2 Create `src/modules/inventory-movements/inventory-movements.routes.ts` for `POST /`, `GET /`, `GET /:id`, and explicit `router.all('/:id', methodNotAllowed)` returning 405 with `Allow: GET`.
-- [ ] 3.3 Update `src/modules/products/products.routes.ts` to mount `GET /:productId/inventory-movements` with auth, read roles, params/query validation, and the movements controller.
-- [ ] 3.4 Update `src/app.ts` to register `/api/inventory-movements` beside the existing module routers.
+- [x] 3.1 Create `src/modules/inventory-movements/inventory-movements.controller.ts`; parse params/query/body with the module schemas and map service results to 201/200 JSON responses.
+- [x] 3.2 Create `src/modules/inventory-movements/inventory-movements.routes.ts` for `POST /`, `GET /`, `GET /:id`, and explicit `router.all('/:id', methodNotAllowed)` returning 405 with `Allow: GET`.
+- [x] 3.3 Update `src/modules/products/products.routes.ts` to mount `GET /:productId/inventory-movements` with auth, read roles, params/query validation, and the movements controller.
+- [x] 3.4 Update `src/app.ts` to register `/api/inventory-movements` beside the existing module routers.
 
 ## Phase 4: Smoke Coverage
 
