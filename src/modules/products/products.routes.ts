@@ -31,6 +31,11 @@ import {
   listProductSuppliersController,
   updateProductController,
 } from './products.controller.js';
+import { listMovementsByProductController } from '../inventory-movements/inventory-movements.controller.js';
+import {
+  listMovementsByProductQuerySchema,
+  movementProductIdParamsSchema,
+} from '../inventory-movements/inventory-movements.schema.js';
 
 export const productsRouter = Router();
 
@@ -96,6 +101,20 @@ productsRouter.delete(
   requireRole(...MUTATION_ROLES),
   validate(productSupplierParamsSchema, 'params'),
   detachProductSupplierController as RequestHandler,
+);
+
+// ── GET /api/products/:productId/inventory-movements ─────────────────────
+//
+// Sub-resource: movement history for a specific product (design D5).
+// Registered before /:id to ensure the more-specific path is matched first.
+
+productsRouter.get(
+  '/:productId/inventory-movements',
+  authenticate,
+  requireRole(...READ_ROLES),
+  validate(movementProductIdParamsSchema, 'params'),
+  validate(listMovementsByProductQuerySchema, 'query'),
+  listMovementsByProductController as RequestHandler,
 );
 
 productsRouter.get(
