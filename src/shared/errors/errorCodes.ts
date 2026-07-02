@@ -59,6 +59,35 @@ export const ERROR_CODES = {
 
   /** Unhandled or unexpected server-side error. */
   INTERNAL_ERROR: 'INTERNAL_ERROR',
+
+  // ---------------------------------------------------------------------------
+  // Inventory movements
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The requested OUT or ADJUSTMENT operation would result in negative stock.
+   * 409 — includes details: { productId, currentStock, attemptedDelta }.
+   */
+  INSUFFICIENT_STOCK: 'INSUFFICIENT_STOCK',
+
+  /**
+   * Optimistic-lock retry exhausted: another transaction updated the product
+   * stock between the read and the write, and the retry attempt also lost the
+   * race. 409.
+   */
+  STOCK_CONCURRENCY_CONFLICT: 'STOCK_CONCURRENCY_CONFLICT',
+
+  /**
+   * The authenticated user's role does not allow this movement type.
+   * OPERATOR may only create OUT movements. 403.
+   */
+  FORBIDDEN_MOVEMENT_TYPE: 'FORBIDDEN_MOVEMENT_TYPE',
+
+  /**
+   * The HTTP method used is not allowed for this resource.
+   * Returned as 405 with an `Allow` header listing permitted methods.
+   */
+  METHOD_NOT_ALLOWED: 'METHOD_NOT_ALLOWED',
 } as const;
 
 /** Union type of all valid error codes. */
