@@ -15,17 +15,17 @@
 
 ## Phase 2: Data + Business Logic
 
-- [ ] 2.1 Create `src/modules/inventory-movements/inventory-movements.repository.ts` with `findProductActive()` and guarded `attemptStockUpdate(tx, productId, observedStock, nextStock)` using `updateMany`.
-- [ ] 2.2 Add repository reads in `inventory-movements.repository.ts`: `insertMovement()`, `findMovementById()`, `listMovements()`, and `listMovementsByProduct()` with parallel `findMany + count`.
-- [ ] 2.3 Create `src/modules/inventory-movements/inventory-movements.service.ts` role/type guard, ADJUSTMENT translator, and `createMovement()` retry loop (2 attempts) with 404 not-found and 409 stock/concurrency handling.
-- [ ] 2.4 Add `getMovement()`, `listMovements()`, and `listMovementsByProduct()` in `inventory-movements.service.ts`, including pre-check that product-scoped reads return 404 for missing/inactive products.
+- [x] 2.1 Create `src/modules/inventory-movements/inventory-movements.repository.ts` with `findProductActive()` and guarded `attemptStockUpdate(tx, productId, observedStock, nextStock)` using `updateMany`.
+- [x] 2.2 Add repository reads in `inventory-movements.repository.ts`: `insertMovement()`, `findMovementById()`, `listMovements()`, and `listMovementsByProduct()` with parallel `findMany + count`.
+- [x] 2.3 Create `src/modules/inventory-movements/inventory-movements.service.ts` role/type guard, ADJUSTMENT translator, and `createMovement()` retry loop (2 attempts) with 404 not-found and 409 stock/concurrency handling.
+- [x] 2.4 Add `getMovement()`, `listMovements()`, and `listMovementsByProduct()` in `inventory-movements.service.ts`, including pre-check that product-scoped reads return 404 for missing/inactive products.
 
 ## Phase 3: HTTP Surface
 
-- [ ] 3.1 Create `src/modules/inventory-movements/inventory-movements.controller.ts`; parse params/query/body with the module schemas and map service results to 201/200 JSON responses.
-- [ ] 3.2 Create `src/modules/inventory-movements/inventory-movements.routes.ts` for `POST /`, `GET /`, `GET /:id`, and explicit `router.all('/:id', methodNotAllowed)` returning 405 with `Allow: GET`.
-- [ ] 3.3 Update `src/modules/products/products.routes.ts` to mount `GET /:productId/inventory-movements` with auth, read roles, params/query validation, and the movements controller.
-- [ ] 3.4 Update `src/app.ts` to register `/api/inventory-movements` beside the existing module routers.
+- [x] 3.1 Create `src/modules/inventory-movements/inventory-movements.controller.ts`; parse params/query/body with the module schemas and map service results to 201/200 JSON responses.
+- [x] 3.2 Create `src/modules/inventory-movements/inventory-movements.routes.ts` for `POST /`, `GET /`, `GET /:id`, and explicit `router.all('/:id', methodNotAllowed)` returning 405 with `Allow: GET`.
+- [x] 3.3 Update `src/modules/products/products.routes.ts` to mount `GET /:productId/inventory-movements` with auth, read roles, params/query validation, and the movements controller.
+- [x] 3.4 Update `src/app.ts` to register `/api/inventory-movements` beside the existing module routers.
 
 ## Phase 4: Smoke Coverage
 
