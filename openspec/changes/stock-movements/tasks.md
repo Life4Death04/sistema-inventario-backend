@@ -15,10 +15,10 @@
 
 ## Phase 2: Data + Business Logic
 
-- [ ] 2.1 Create `src/modules/inventory-movements/inventory-movements.repository.ts` with `findProductActive()` and guarded `attemptStockUpdate(tx, productId, observedStock, nextStock)` using `updateMany`.
-- [ ] 2.2 Add repository reads in `inventory-movements.repository.ts`: `insertMovement()`, `findMovementById()`, `listMovements()`, and `listMovementsByProduct()` with parallel `findMany + count`.
-- [ ] 2.3 Create `src/modules/inventory-movements/inventory-movements.service.ts` role/type guard, ADJUSTMENT translator, and `createMovement()` retry loop (2 attempts) with 404 not-found and 409 stock/concurrency handling.
-- [ ] 2.4 Add `getMovement()`, `listMovements()`, and `listMovementsByProduct()` in `inventory-movements.service.ts`, including pre-check that product-scoped reads return 404 for missing/inactive products.
+- [x] 2.1 Create `src/modules/inventory-movements/inventory-movements.repository.ts` with `findProductActive()` and guarded `attemptStockUpdate(tx, productId, observedStock, nextStock)` using `updateMany`.
+- [x] 2.2 Add repository reads in `inventory-movements.repository.ts`: `insertMovement()`, `findMovementById()`, `listMovements()`, and `listMovementsByProduct()` with parallel `findMany + count`.
+- [x] 2.3 Create `src/modules/inventory-movements/inventory-movements.service.ts` role/type guard, ADJUSTMENT translator, and `createMovement()` retry loop (2 attempts) with 404 not-found and 409 stock/concurrency handling.
+- [x] 2.4 Add `getMovement()`, `listMovements()`, and `listMovementsByProduct()` in `inventory-movements.service.ts`, including pre-check that product-scoped reads return 404 for missing/inactive products.
 
 ## Phase 3: HTTP Surface
 
