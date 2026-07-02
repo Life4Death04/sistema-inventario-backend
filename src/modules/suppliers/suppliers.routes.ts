@@ -36,6 +36,11 @@ import {
   updateSupplierController,
   deleteSupplierController,
 } from './suppliers.controller.js';
+import { listReplenishmentRequestsBySupplierController } from '../replenishment-requests/replenishment-requests.controller.js';
+import {
+  supplierIdParamsSchema as replenishmentSupplierIdParamsSchema,
+  listReplenishmentRequestsQuerySchema,
+} from '../replenishment-requests/replenishment-requests.schema.js';
 
 export const suppliersRouter = Router();
 
@@ -110,4 +115,22 @@ suppliersRouter.delete(
   requireRole('ADMIN', 'MANAGER'),
   validate(supplierIdParamsSchema, 'params'),
   deleteSupplierController as RequestHandler,
+);
+
+/**
+ * GET /api/suppliers/:supplierId/replenishment-requests
+ * Params: { supplierId: cuid }
+ * Query:  { page?, pageSize?, status?, dateFrom?, dateTo? }
+ * Returns paginated replenishment requests for the given supplier.
+ * Roles: ADMIN, MANAGER, OPERATOR
+ *
+ * Note: Uses supplierId (not id) to avoid shadowing the /:id param above.
+ * The replenishment module's controller is mounted directly here (design §Supplier list route).
+ */
+suppliersRouter.get(
+  '/:supplierId/replenishment-requests',
+  authenticate,
+  validate(replenishmentSupplierIdParamsSchema, 'params'),
+  validate(listReplenishmentRequestsQuerySchema, 'query'),
+  listReplenishmentRequestsBySupplierController as RequestHandler,
 );

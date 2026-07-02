@@ -41,6 +41,7 @@ import { categoriesRouter } from './modules/categories/categories.routes.js';
 import { suppliersRouter } from './modules/suppliers/suppliers.routes.js';
 import { productsRouter } from './modules/products/products.routes.js';
 import { inventoryMovementsRouter } from './modules/inventory-movements/inventory-movements.routes.js';
+import { replenishmentRequestsRouter } from './modules/replenishment-requests/replenishment-requests.routes.js';
 
 const app = express();
 
@@ -108,6 +109,7 @@ app.use('/api/categories', categoriesRouter);
 app.use('/api/suppliers', suppliersRouter);
 app.use('/api/products', productsRouter);
 app.use('/api/inventory-movements', inventoryMovementsRouter);
+app.use('/api/replenishment-requests', replenishmentRequestsRouter);
 
 // ── 404 fallback (after all routes, before error handler) ───────────────────
 app.use(notFound);
