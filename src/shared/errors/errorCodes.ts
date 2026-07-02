@@ -98,6 +98,48 @@ export const ERROR_CODES = {
    * Returned as 405 with an `Allow` header listing permitted methods.
    */
   METHOD_NOT_ALLOWED: 'METHOD_NOT_ALLOWED',
+
+  // ---------------------------------------------------------------------------
+  // Replenishment requests
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The requested ReplenishmentRequest does not exist. 404.
+   */
+  REPLENISHMENT_REQUEST_NOT_FOUND: 'REPLENISHMENT_REQUEST_NOT_FOUND',
+
+  /**
+   * State-machine transition not allowed from the current status, or the
+   * status-CAS (updateMany) matched 0 rows (concurrent transition). 409.
+   */
+  INVALID_STATE_TRANSITION: 'INVALID_STATE_TRANSITION',
+
+  /**
+   * An item omits unitPrice and no ProductSupplier.referencePrice exists for
+   * the (supplierId, productId) pair. 400.
+   */
+  UNIT_PRICE_REQUIRED: 'UNIT_PRICE_REQUIRED',
+
+  /**
+   * A receivedQuantity value is negative or greater than the item quantity. 400.
+   */
+  PARTIAL_RECEIPT_INVALID: 'PARTIAL_RECEIPT_INVALID',
+
+  /**
+   * Send was called but the supplier's whatsapp field is null or blank. 422.
+   */
+  SUPPLIER_HAS_NO_WHATSAPP: 'SUPPLIER_HAS_NO_WHATSAPP',
+
+  /**
+   * The create body has an empty items array (items:[]).
+   * Mapped from a Zod .min(1) sentinel in the validate middleware. 400.
+   */
+  REPLENISHMENT_ITEMS_REQUIRED: 'REPLENISHMENT_ITEMS_REQUIRED',
+
+  /**
+   * The receive body references an item id not belonging to the request. 400.
+   */
+  REPLENISHMENT_ITEM_NOT_FOUND: 'REPLENISHMENT_ITEM_NOT_FOUND',
 } as const;
 
 /** Union type of all valid error codes. */
