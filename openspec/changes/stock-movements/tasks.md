@@ -8,10 +8,10 @@
 
 ## Phase 1: Foundation
 
-- [ ] 1.1 Update `src/shared/errors/errorCodes.ts` with `INSUFFICIENT_STOCK`, `STOCK_CONCURRENCY_CONFLICT`, `FORBIDDEN_MOVEMENT_TYPE`, `METHOD_NOT_ALLOWED`; remove `INVALID_ADJUSTMENT_QUANTITY` from this change scope.
-- [ ] 1.2 Create `src/modules/inventory-movements/inventory-movements.schema.ts` body schemas for IN/OUT/ADJUSTMENT, using signed non-zero ADJUSTMENT input and required trimmed `reason`.
-- [ ] 1.3 Add `id` and `productId` params schemas in `inventory-movements.schema.ts`, confirming both `Product.id` and `InventoryMovement.id` remain `cuid()` in `prisma/schema.prisma`.
-- [ ] 1.4 Add list query schemas in `inventory-movements.schema.ts`: global extends `paginationQuerySchema` with `productId?`, `type?`, `from?`, `to?`; product-scoped omits `productId`; export DTO/response types with shared `PaginatedResponse`.
+- [x] 1.1 Update `src/shared/errors/errorCodes.ts` with `INSUFFICIENT_STOCK`, `STOCK_CONCURRENCY_CONFLICT`, `FORBIDDEN_MOVEMENT_TYPE`, `METHOD_NOT_ALLOWED`; remove `INVALID_ADJUSTMENT_QUANTITY` from this change scope.
+- [x] 1.2 Create `src/modules/inventory-movements/inventory-movements.schema.ts` body schemas for IN/OUT/ADJUSTMENT, using signed non-zero ADJUSTMENT input and required trimmed `reason`.
+- [x] 1.3 Add `id` and `productId` params schemas in `inventory-movements.schema.ts`, confirming both `Product.id` and `InventoryMovement.id` remain `cuid()` in `prisma/schema.prisma`.
+- [x] 1.4 Add list query schemas in `inventory-movements.schema.ts`: global extends `paginationQuerySchema` with `productId?`, `type?`, `from?`, `to?`; product-scoped omits `productId`; export DTO/response types with shared `PaginatedResponse`.
 
 ## Phase 2: Data + Business Logic
 
@@ -44,11 +44,11 @@
 - 800-line budget risk (session budget): High
 - Chained PRs recommended: Yes
 - Suggested split (if chained): PR 1 foundation (`errorCodes.ts`, schema, repository, service); PR 2 HTTP surface (`controller`, `routes`, `products.routes.ts`, `app.ts`) + smoke scaffold; PR 3 scenario-heavy smoke coverage + verify handoff
-- Decision needed before apply: Yes
-- Chain strategy: pending
-- Rationale: This change spans nine touched files, cross-router wiring, shared error catalog edits, optimistic concurrency logic, and a large smoke suite roughly comparable to the products reference. The production slice alone is review-heavy, and the 34-scenario test file can exceed the session budget by itself. Because delivery strategy is `ask-on-risk`, implementation should pause for chain-strategy confirmation before apply.
+- Decision needed before apply: Resolved
+- Chain strategy: feature-branch-chain (tracker: feat/stock-movements; PR 1 → feat/stock-movements; PR 2 → PR 1 branch; PR 3 → PR 2 branch)
+- Rationale: This change spans nine touched files, cross-router wiring, shared error catalog edits, optimistic concurrency logic, and a large smoke suite roughly comparable to the products reference. The production slice alone is review-heavy, and the 34-scenario test file can exceed the session budget by itself.
 
-Decision needed before apply: Yes
+Decision needed before apply: Resolved
 Chained PRs recommended: Yes
-Chain strategy: pending
+Chain strategy: feature-branch-chain
 400-line budget risk: High
