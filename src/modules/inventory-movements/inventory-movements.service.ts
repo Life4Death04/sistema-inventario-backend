@@ -93,7 +93,7 @@ export class InventoryMovementsService {
    * Guards (in order):
    *   1. 403 FORBIDDEN_MOVEMENT_TYPE — OPERATOR may only create OUT.
    *   2. Retry loop (up to 2 attempts):
-   *      a. 404 NOT_FOUND — product does not exist or is inactive.
+   *      a. 404 PRODUCT_NOT_FOUND — product does not exist or is inactive.
    *      b. 409 INSUFFICIENT_STOCK — resultingStock would be negative.
    *      c. compare-and-swap via updateMany; count=0 → retry sentinel.
    *      d. insert movement atomically with the stock update.
@@ -132,7 +132,11 @@ export class InventoryMovementsService {
           const product = await inventoryMovementsRepository.findProductActive(dto.productId);
 
           if (!product || !product.active) {
-            throw new AppError(ERROR_CODES.NOT_FOUND, 404, `Product not found: ${dto.productId}.`);
+            throw new AppError(
+              ERROR_CODES.PRODUCT_NOT_FOUND,
+              404,
+              `Product not found: ${dto.productId}.`,
+            );
           }
 
           const observedStock = product.stock;
@@ -216,7 +220,7 @@ export class InventoryMovementsService {
   async getMovement(id: string): Promise<MovementDto> {
     const movement = await inventoryMovementsRepository.findMovementById(id);
     if (!movement) {
-      throw new AppError(ERROR_CODES.NOT_FOUND, 404, `Movement not found: ${id}.`);
+      throw new AppError(ERROR_CODES.MOVEMENT_NOT_FOUND, 404, `Movement not found: ${id}.`);
     }
     return movement;
   }
@@ -238,7 +242,7 @@ export class InventoryMovementsService {
    * Paginated list of movements for a specific product.
    *
    * Pre-check (spec R4): the product must exist AND be active. If missing or
-   * inactive → 404 NOT_FOUND (matches products-crud idempotency guard from spec §Assumptions).
+   * inactive → 404 PRODUCT_NOT_FOUND (matches products-crud idempotency guard from spec §Assumptions).
    * An empty movement history for a valid active product returns 200 data:[].
    */
   async listMovementsByProduct(
@@ -248,7 +252,7 @@ export class InventoryMovementsService {
     // Pre-check: product must exist and be active.
     const product = await inventoryMovementsRepository.findProductActive(productId);
     if (!product || !product.active) {
-      throw new AppError(ERROR_CODES.NOT_FOUND, 404, `Product not found: ${productId}.`);
+      throw new AppError(ERROR_CODES.PRODUCT_NOT_FOUND, 404, `Product not found: ${productId}.`);
     }
 
     const [data, total] = await inventoryMovementsRepository.listMovementsByProduct(

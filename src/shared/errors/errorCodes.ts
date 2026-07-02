@@ -51,6 +51,16 @@ export const ERROR_CODES = {
   /** Requested resource does not exist. */
   NOT_FOUND: 'NOT_FOUND',
 
+  /** An inventory movement with the given id does not exist. */
+  MOVEMENT_NOT_FOUND: 'MOVEMENT_NOT_FOUND',
+
+  /**
+   * The target product does not exist or is soft-deleted (inactive).
+   * Used by the inventory-movements module for both createMovement and
+   * listMovementsByProduct pre-checks.
+   */
+  PRODUCT_NOT_FOUND: 'PRODUCT_NOT_FOUND',
+
   /** Unique constraint or conflicting business state. */
   CONFLICT: 'CONFLICT',
 
