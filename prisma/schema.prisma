@@ -77,10 +77,12 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  movements             InventoryMovement[]
-  replenishmentRequests ReplenishmentRequest[]
-  resolvedAlerts        Alert[]                @relation("AlertResolver")
-  refreshTokens         RefreshToken[]
+  movements                InventoryMovement[]
+  replenishmentRequests    ReplenishmentRequest[]
+  resolvedAlerts           Alert[]                @relation("AlertResolver")
+  refreshTokens            RefreshToken[]
+  receivedRequests         ReplenishmentRequest[] @relation("ReplenishmentReceiver")
+  cancelledRequests        ReplenishmentRequest[] @relation("ReplenishmentCanceller")
 
   @@index([email])
   @@index([active])
@@ -228,23 +230,32 @@ model Alert {
 }
 
 model ReplenishmentRequest {
-  id                String              @id @default(cuid())
-  supplierId        String
-  requestedByUserId String
-  status            ReplenishmentStatus @default(PENDING)
-  requestedAt       DateTime            @default(now())
-  sentAt            DateTime?
-  notes             String?
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
+  id                  String              @id @default(cuid())
+  supplierId          String
+  requestedByUserId   String
+  status              ReplenishmentStatus @default(PENDING)
+  requestedAt         DateTime            @default(now())
+  sentAt              DateTime?
+  receivedAt          DateTime?
+  cancelledAt         DateTime?
+  receivedByUserId    String?
+  cancelledByUserId   String?
+  notes               String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
 
-  supplier        Supplier                   @relation(fields: [supplierId], references: [id], onDelete: Restrict) // preserve order history
-  requestedByUser User                       @relation(fields: [requestedByUserId], references: [id], onDelete: Restrict)
-  items           ReplenishmentRequestItem[]
+  supplier          Supplier                   @relation(fields: [supplierId], references: [id], onDelete: Restrict) // preserve order history
+  requestedByUser   User                       @relation(fields: [requestedByUserId], references: [id], onDelete: Restrict)
+  receivedByUser    User?                      @relation("ReplenishmentReceiver", fields: [receivedByUserId], references: [id], onDelete: Restrict)
+  cancelledByUser   User?                      @relation("ReplenishmentCanceller", fields: [cancelledByUserId], references: [id], onDelete: Restrict)
+  items             ReplenishmentRequestItem[]
 
   @@index([supplierId])
   @@index([status])
   @@index([requestedAt])
+  @@index([supplierId, status])
+  @@index([receivedByUserId])
+  @@index([cancelledByUserId])
 }
 
 model ReplenishmentRequestItem {
@@ -252,11 +263,13 @@ model ReplenishmentRequestItem {
   replenishmentRequestId String
   productId              String
   requestedQuantity      Int
+  receivedQuantity       Int?
   unitPrice              Decimal @db.Decimal(12, 2)
 
   request ReplenishmentRequest @relation(fields: [replenishmentRequestId], references: [id], onDelete: Cascade)
   product Product              @relation(fields: [productId], references: [id], onDelete: Restrict)
 
+  @@unique([replenishmentRequestId, productId])
   @@index([replenishmentRequestId])
   @@index([productId])
 }
