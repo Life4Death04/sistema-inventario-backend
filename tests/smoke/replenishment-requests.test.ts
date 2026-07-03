@@ -99,11 +99,26 @@ const REQ3_ID = 'clh3xxk0h8003356c9a5obatr'; // RECEIVED (terminal)
 const REQ4_ID = 'clh3xxk0h8004356c9a5obaur'; // CANCELLED (terminal)
 const MISSING_REQ_ID = 'clh3xxk0h8099356c9a5zzzzz';
 
-const ITEM1_ID = 'clh3xxk0h9001356c9a5oba8i'; // item on REQ1
-const ITEM2_ID = 'clh3xxk0h9002356c9a5oba9i'; // item on REQ2
+const ITEM1_ID = 'clh3xxk0h9001356c9a5oba8i'; // item on REQ1 (PROD1, qty=10)
+const ITEM2_ID = 'clh3xxk0h9002356c9a5oba9i'; // item on REQ2 (PROD2, qty=20)
+const ITEM3_ID = 'clh3xxk0h9003356c9a5obabi'; // item on REQ2 (PROD1, qty=10) — second item for multi-item tests
 const UNKNOWN_ITEM_ID = 'clh3xxk0h9099356c9a5zzzzz';
 
 // ── In-memory stores ──────────────────────────────────────────────────────────
+
+interface MockMovement {
+  id: string;
+  productId: string;
+  userId: string;
+  type: string;
+  adjustmentDirection: string | null;
+  quantity: number;
+  resultingStock: number;
+  reason: string;
+  createdAt: Date;
+}
+
+let movementStore: MockMovement[];
 
 interface MockRequest {
   id: string;
@@ -157,6 +172,7 @@ let itemCounter: number;
 function seedStores(): void {
   requestCounter = 0;
   itemCounter = 0;
+  movementStore = [];
 
   supplierStore = new Map([
     [SUPPLIER1_ID, { id: SUPPLIER1_ID, name: 'SupplierOne SA', whatsapp: '+14155238886' }],
@@ -256,6 +272,17 @@ function seedStores(): void {
         requestedQuantity: 20,
         receivedQuantity: null,
         unitPrice: { toNumber: () => 12.0 },
+      },
+    ],
+    [
+      ITEM3_ID,
+      {
+        id: ITEM3_ID,
+        replenishmentRequestId: REQ2_ID,
+        productId: PROD1_ID,
+        requestedQuantity: 10,
+        receivedQuantity: null,
+        unitPrice: { toNumber: () => 5.5 },
       },
     ],
   ]);
@@ -611,18 +638,32 @@ describe('Replenishment Requests smoke tests', () => {
     );
 
     // ── mockTx.inventoryMovement.create ───────────────────────────────────
+    // Tracks each created movement so tests can assert productId and count.
     // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-    vi.mocked(prisma._mockTx.inventoryMovement.create).mockResolvedValue({
-      id: 'clh3xxk0hm001356c9a5newmv',
-      productId: PROD1_ID,
-      userId: ADMIN_ID,
-      type: 'IN',
-      adjustmentDirection: null,
-      quantity: 10,
-      resultingStock: 60,
-      reason: 'Received from replenishment request',
-      createdAt: new Date(),
-    });
+    vi.mocked(prisma._mockTx.inventoryMovement.create).mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ({ data }: { data: any }) => {
+        const movement: MockMovement = {
+          id: `clh3xxk0hm${movementStore.length.toString().padStart(3, '0')}356c9a5newmv`,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          productId: data.productId as string,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          userId: data.userId as string,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          type: data.type as string,
+          adjustmentDirection: null,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          quantity: data.quantity as number,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          resultingStock: data.resultingStock as number,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          reason: data.reason as string,
+          createdAt: new Date(),
+        };
+        movementStore.push(movement);
+        return Promise.resolve(movement);
+      },
+    );
 
     // ── user.findUnique (required by authenticate middleware) ───────────────
     // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
@@ -944,7 +985,10 @@ describe('Replenishment Requests smoke tests', () => {
   // ── SEND smoke tests (task 3.4) ───────────────────────────────────────────
 
   describe('POST /api/replenishment-requests/:id/send', () => {
-    it('(SN1) Happy path: PENDING → SENT, returns 200 with updated status', async () => {
+    it('(SN1) Happy path: PENDING → SENT, returns 200, WhatsApp fired with correct phone+body', async () => {
+      const fakeSend = vi.fn().mockResolvedValue(undefined);
+      __setNotificationService({ sendWhatsAppMessage: fakeSend });
+
       const res = await request(app)
         .post(`/api/replenishment-requests/${REQ1_ID}/send`)
         .set('Authorization', `Bearer ${MANAGER_TOKEN()}`);
@@ -953,6 +997,21 @@ describe('Replenishment Requests smoke tests', () => {
       const body = res.body as { request: RequestDto };
       expect(body.request.status).toBe('SENT');
       expect(body.request.sentAt).not.toBeNull();
+
+      // Allow fire-and-forget microtask to settle before asserting notification.
+      await Promise.resolve();
+
+      // NotificationService MUST have been called exactly once.
+      expect(fakeSend).toHaveBeenCalledOnce();
+
+      // First arg: E.164 phone prefixed with 'whatsapp:'.
+      // SUPPLIER1 whatsapp = '+14155238886' → normalizeE164 returns '+14155238886'.
+      const [toArg, bodyArg] = fakeSend.mock.calls[0] as [string, string];
+      expect(toArg).toBe('whatsapp:+14155238886');
+
+      // Body must contain the request id and supplier name (from buildSentTemplate).
+      expect(bodyArg).toContain(REQ1_ID);
+      expect(bodyArg).toContain('SupplierOne SA');
     });
 
     it('(SN2) Supplier has no WhatsApp → 422 SUPPLIER_HAS_NO_WHATSAPP', async () => {
@@ -1053,8 +1112,11 @@ describe('Replenishment Requests smoke tests', () => {
   // ── RECEIVE smoke tests (task 3.5) ────────────────────────────────────────
 
   describe('POST /api/replenishment-requests/:id/receive', () => {
-    it('(RV1) Default quantities: 1 IN movement created, stock updated', async () => {
-      // REQ2 is SENT with ITEM2 (PROD2, qty=20, stock=20).
+    it('(RV1) Canonical multi-item: 2 IN movements created, stock updated on both products', async () => {
+      // REQ2 is SENT with TWO items:
+      //   ITEM2 → PROD2 (qty=20, initial stock=20)
+      //   ITEM3 → PROD1 (qty=10, initial stock=50)
+      // No body overrides → both items use their requestedQuantity as receivedQuantity.
       const res = await request(app)
         .post(`/api/replenishment-requests/${REQ2_ID}/receive`)
         .set('Authorization', `Bearer ${ADMIN_TOKEN()}`)
@@ -1066,9 +1128,24 @@ describe('Replenishment Requests smoke tests', () => {
       expect(body.request.receivedAt).not.toBeNull();
       expect(body.request.receivedByUserId).toBe(ADMIN_ID);
 
-      // Stock should be updated in productStore.
-      const product = productStore.get(PROD2_ID);
-      expect(product?.stock).toBe(40); // 20 original + 20 received
+      // Two items must be marked received with their requested quantities.
+      const item2 = itemStore.get(ITEM2_ID);
+      expect(item2?.receivedQuantity).toBe(20);
+      const item3 = itemStore.get(ITEM3_ID);
+      expect(item3?.receivedQuantity).toBe(10);
+
+      // TWO IN movements must have been inserted — one per item.
+      expect(movementStore).toHaveLength(2);
+      const movProductIds = movementStore.map((m) => m.productId).sort();
+      expect(movProductIds).toEqual([PROD1_ID, PROD2_ID].sort());
+      expect(movementStore.every((m) => m.type === 'IN')).toBe(true);
+
+      // Stock delta on BOTH products.
+      const prod2 = productStore.get(PROD2_ID);
+      expect(prod2?.stock).toBe(40); // 20 original + 20 received
+
+      const prod1 = productStore.get(PROD1_ID);
+      expect(prod1?.stock).toBe(60); // 50 original + 10 received
     });
 
     it('(RV2) Partial receipt with override quantity', async () => {
@@ -1157,6 +1234,24 @@ describe('Replenishment Requests smoke tests', () => {
 
       expect(res.status).toBe(404);
       expect((res.body as ErrorBody).error).toBe('REPLENISHMENT_REQUEST_NOT_FOUND');
+    });
+
+    it('(RV8) OPERATOR cannot receive → 403, no state change', async () => {
+      // Capture REQ2 status before the attempt.
+      const beforeStatus = requestStore.get(REQ2_ID)?.status;
+
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${REQ2_ID}/receive`)
+        .set('Authorization', `Bearer ${OPERATOR_TOKEN()}`)
+        .send({});
+
+      expect(res.status).toBe(403);
+
+      // No side effects: request must still be in its original state.
+      expect(requestStore.get(REQ2_ID)?.status).toBe(beforeStatus);
+
+      // No IN movements should have been inserted.
+      expect(movementStore).toHaveLength(0);
     });
   });
 
