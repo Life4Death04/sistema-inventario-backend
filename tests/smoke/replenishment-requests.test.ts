@@ -1,11 +1,16 @@
 /**
- * Smoke tests for replenishment-requests endpoints (Phase 1 — read side).
+ * Smoke tests for replenishment-requests endpoints.
  *
- * Coverage:
+ * Phase 1 coverage (read side):
  *   - POST   /api/replenishment-requests          (create: success, fallback, no price, empty items, role)
  *   - GET    /api/replenishment-requests          (list with filters, pagination)
  *   - GET    /api/replenishment-requests/:id      (get by id: found, 404)
  *   - GET    /api/suppliers/:supplierId/replenishment-requests  (supplier-scoped list)
+ *
+ * Phase 2 coverage (state transitions):
+ *   - POST   /api/replenishment-requests/:id/send     (PENDING → SENT + WhatsApp)
+ *   - POST   /api/replenishment-requests/:id/receive  (SENT → RECEIVED + stock IN)
+ *   - POST   /api/replenishment-requests/:id/cancel   (PENDING|SENT → CANCELLED)
  *
  * Prisma is fully mocked — no real DB required.
  * Follows the mocked-Prisma pattern from tests/smoke/inventory-movements.test.ts.
@@ -15,7 +20,8 @@
  *   Array form (batch/parallel)    → Promise.all(queries).
  *
  * NotificationService is stubbed via __setNotificationService to prevent any
- * real Twilio calls (fire-and-forget in send/cancel — not exercised here).
+ * real Twilio calls. For failure scenarios, sendWhatsAppMessage is overridden
+ * to reject so we can verify the DB transition still holds.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
@@ -87,12 +93,15 @@ const SUPPLIER2_ID = 'clh3xxk0h5002356c9a5oba9t';
 const PROD1_ID = 'clh3xxk0h1001356c9a5oba8m';
 const PROD2_ID = 'clh3xxk0h1002356c9a5oba9n';
 
-const REQ1_ID = 'clh3xxk0h8001356c9a5oba8r';
-const REQ2_ID = 'clh3xxk0h8002356c9a5oba9r';
+const REQ1_ID = 'clh3xxk0h8001356c9a5oba8r'; // PENDING — used for SEND/CANCEL tests
+const REQ2_ID = 'clh3xxk0h8002356c9a5oba9r'; // SENT   — used for RECEIVE/CANCEL tests
+const REQ3_ID = 'clh3xxk0h8003356c9a5obatr'; // RECEIVED (terminal)
+const REQ4_ID = 'clh3xxk0h8004356c9a5obaur'; // CANCELLED (terminal)
 const MISSING_REQ_ID = 'clh3xxk0h8099356c9a5zzzzz';
 
-const ITEM1_ID = 'clh3xxk0h9001356c9a5oba8i';
-const ITEM2_ID = 'clh3xxk0h9002356c9a5oba9i';
+const ITEM1_ID = 'clh3xxk0h9001356c9a5oba8i'; // item on REQ1
+const ITEM2_ID = 'clh3xxk0h9002356c9a5oba9i'; // item on REQ2
+const UNKNOWN_ITEM_ID = 'clh3xxk0h9099356c9a5zzzzz';
 
 // ── In-memory stores ──────────────────────────────────────────────────────────
 
@@ -125,9 +134,23 @@ interface MockProductSupplier {
   referencePrice: { toNumber(): number } | null;
 }
 
+interface MockSupplier {
+  id: string;
+  name: string;
+  whatsapp: string | null;
+}
+
+interface MockProduct {
+  id: string;
+  stock: number;
+  active: boolean;
+}
+
 let requestStore: Map<string, MockRequest>;
 let itemStore: Map<string, MockItem>;
 let productSupplierStore: Map<string, MockProductSupplier>;
+let supplierStore: Map<string, MockSupplier>;
+let productStore: Map<string, MockProduct>;
 let requestCounter: number;
 let itemCounter: number;
 
@@ -135,12 +158,22 @@ function seedStores(): void {
   requestCounter = 0;
   itemCounter = 0;
 
+  supplierStore = new Map([
+    [SUPPLIER1_ID, { id: SUPPLIER1_ID, name: 'SupplierOne SA', whatsapp: '+14155238886' }],
+    [SUPPLIER2_ID, { id: SUPPLIER2_ID, name: 'SupplierTwo SRL', whatsapp: null }],
+  ]);
+
+  productStore = new Map([
+    [PROD1_ID, { id: PROD1_ID, stock: 50, active: true }],
+    [PROD2_ID, { id: PROD2_ID, stock: 20, active: true }],
+  ]);
+
   requestStore = new Map([
     [
       REQ1_ID,
       {
         id: REQ1_ID,
-        supplierId: SUPPLIER1_ID,
+        supplierId: SUPPLIER1_ID, // has WhatsApp → send succeeds
         requestedByUserId: MANAGER_ID,
         status: 'PENDING',
         requestedAt: new Date('2026-07-01T10:00:00.000Z'),
@@ -156,7 +189,7 @@ function seedStores(): void {
       REQ2_ID,
       {
         id: REQ2_ID,
-        supplierId: SUPPLIER2_ID,
+        supplierId: SUPPLIER1_ID, // SENT → can be received or cancelled
         requestedByUserId: ADMIN_ID,
         status: 'SENT',
         requestedAt: new Date('2026-07-02T08:00:00.000Z'),
@@ -165,6 +198,38 @@ function seedStores(): void {
         receivedByUserId: null,
         cancelledAt: null,
         cancelledByUserId: null,
+        notes: null,
+      },
+    ],
+    [
+      REQ3_ID,
+      {
+        id: REQ3_ID,
+        supplierId: SUPPLIER1_ID,
+        requestedByUserId: ADMIN_ID,
+        status: 'RECEIVED',
+        requestedAt: new Date('2026-07-01T07:00:00.000Z'),
+        sentAt: new Date('2026-07-01T08:00:00.000Z'),
+        receivedAt: new Date('2026-07-01T12:00:00.000Z'),
+        receivedByUserId: ADMIN_ID,
+        cancelledAt: null,
+        cancelledByUserId: null,
+        notes: null,
+      },
+    ],
+    [
+      REQ4_ID,
+      {
+        id: REQ4_ID,
+        supplierId: SUPPLIER1_ID,
+        requestedByUserId: MANAGER_ID,
+        status: 'CANCELLED',
+        requestedAt: new Date('2026-06-30T10:00:00.000Z'),
+        sentAt: null,
+        receivedAt: null,
+        receivedByUserId: null,
+        cancelledAt: new Date('2026-06-30T11:00:00.000Z'),
+        cancelledByUserId: MANAGER_ID,
         notes: null,
       },
     ],
@@ -212,6 +277,7 @@ function seedStores(): void {
 // ── Prisma mock ───────────────────────────────────────────────────────────────
 
 vi.mock('../../src/shared/utils/prisma.js', () => {
+  // Transaction client — used in $transaction callback calls.
   const mockTx = {
     replenishmentRequest: {
       create: vi.fn(),
@@ -224,6 +290,7 @@ vi.mock('../../src/shared/utils/prisma.js', () => {
       create: vi.fn(),
     },
     product: {
+      findUnique: vi.fn(),
       updateMany: vi.fn(),
     },
   };
@@ -240,6 +307,9 @@ vi.mock('../../src/shared/utils/prisma.js', () => {
       update: vi.fn(),
     },
     productSupplier: {
+      findUnique: vi.fn(),
+    },
+    supplier: {
       findUnique: vi.fn(),
     },
     product: {
@@ -286,7 +356,7 @@ const OPERATOR_TOKEN = () => makeAccessToken(OPERATOR_ID, 'OPERATOR');
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 
-describe('Replenishment Requests smoke tests (Phase 1 — read side)', () => {
+describe('Replenishment Requests smoke tests', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     seedStores();
@@ -451,6 +521,15 @@ describe('Replenishment Requests smoke tests (Phase 1 — read side)', () => {
       },
     );
 
+    // ── supplier.findUnique ─────────────────────────────────────────────────
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    vi.mocked(prisma.supplier.findUnique).mockImplementation(
+      ({ where }: { where: { id?: string } }) => {
+        if (!where.id) return Promise.resolve(null);
+        return Promise.resolve(supplierStore.get(where.id) ?? null);
+      },
+    );
+
     // ── $transaction ────────────────────────────────────────────────────────
     // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     vi.mocked(prisma.$transaction).mockImplementation(
@@ -463,6 +542,87 @@ describe('Replenishment Requests smoke tests (Phase 1 — read side)', () => {
         return Promise.all(callbackOrArray);
       },
     );
+
+    // ── mockTx.replenishmentRequest.updateMany ──────────────────────────────
+    // Default: CAS succeeds (count=1). Override per-test for race scenarios.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    vi.mocked(prisma._mockTx.replenishmentRequest.updateMany).mockImplementation(
+      ({
+        where,
+        data,
+      }: {
+        where: { id?: string; status?: string };
+        data: Record<string, unknown>;
+      }) => {
+        if (!where.id) return Promise.resolve({ count: 0 });
+        const row = requestStore.get(where.id);
+        if (!row || (where.status && row.status !== where.status)) {
+          return Promise.resolve({ count: 0 });
+        }
+        // Apply the update to the in-memory store.
+        Object.assign(row, data);
+        return Promise.resolve({ count: 1 });
+      },
+    );
+
+    // ── mockTx.replenishmentRequestItem.update ──────────────────────────────
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    vi.mocked(prisma._mockTx.replenishmentRequestItem.update).mockImplementation(
+      ({ where, data }: { where: { id?: string }; data: { receivedQuantity?: number } }) => {
+        if (!where.id) return Promise.resolve(null);
+        const item = itemStore.get(where.id);
+        if (item && data.receivedQuantity !== undefined) {
+          item.receivedQuantity = data.receivedQuantity;
+        }
+        return Promise.resolve(item ?? null);
+      },
+    );
+
+    // ── mockTx.product.findUnique ──────────────────────────────────────────
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    vi.mocked(prisma._mockTx.product.findUnique).mockImplementation(
+      ({ where }: { where: { id?: string } }) => {
+        if (!where.id) return Promise.resolve(null);
+        return Promise.resolve(productStore.get(where.id) ?? null);
+      },
+    );
+
+    // ── mockTx.product.updateMany (stock CAS) ─────────────────────────────
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    vi.mocked(prisma._mockTx.product.updateMany).mockImplementation(
+      ({
+        where,
+        data,
+      }: {
+        where: { id?: string; stock?: number; active?: boolean };
+        data: { stock?: number };
+      }) => {
+        if (!where.id) return Promise.resolve({ count: 0 });
+        const product = productStore.get(where.id);
+        if (!product || !product.active) return Promise.resolve({ count: 0 });
+        if (where.stock !== undefined && product.stock !== where.stock) {
+          return Promise.resolve({ count: 0 });
+        }
+        if (data.stock !== undefined) {
+          product.stock = data.stock;
+        }
+        return Promise.resolve({ count: 1 });
+      },
+    );
+
+    // ── mockTx.inventoryMovement.create ───────────────────────────────────
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    vi.mocked(prisma._mockTx.inventoryMovement.create).mockResolvedValue({
+      id: 'clh3xxk0hm001356c9a5newmv',
+      productId: PROD1_ID,
+      userId: ADMIN_ID,
+      type: 'IN',
+      adjustmentDirection: null,
+      quantity: 10,
+      resultingStock: 60,
+      reason: 'Received from replenishment request',
+      createdAt: new Date(),
+    });
 
     // ── user.findUnique (required by authenticate middleware) ───────────────
     // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
@@ -778,6 +938,309 @@ describe('Replenishment Requests smoke tests (Phase 1 — read side)', () => {
 
       expect(res.status).toBe(400);
       expect((res.body as ErrorBody).error).toBe('VALIDATION_ERROR');
+    });
+  });
+
+  // ── SEND smoke tests (task 3.4) ───────────────────────────────────────────
+
+  describe('POST /api/replenishment-requests/:id/send', () => {
+    it('(SN1) Happy path: PENDING → SENT, returns 200 with updated status', async () => {
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${REQ1_ID}/send`)
+        .set('Authorization', `Bearer ${MANAGER_TOKEN()}`);
+
+      expect(res.status).toBe(200);
+      const body = res.body as { request: RequestDto };
+      expect(body.request.status).toBe('SENT');
+      expect(body.request.sentAt).not.toBeNull();
+    });
+
+    it('(SN2) Supplier has no WhatsApp → 422 SUPPLIER_HAS_NO_WHATSAPP', async () => {
+      // REQ1 is on SUPPLIER1 (has WhatsApp). We need a request on SUPPLIER2 (no WhatsApp).
+      // Inject a PENDING request pointing to SUPPLIER2.
+      const noWaId = 'clh3xxk0h8010356c9a5nowrr';
+      requestStore.set(noWaId, {
+        id: noWaId,
+        supplierId: SUPPLIER2_ID, // no whatsapp
+        requestedByUserId: MANAGER_ID,
+        status: 'PENDING',
+        requestedAt: new Date(),
+        sentAt: null,
+        receivedAt: null,
+        receivedByUserId: null,
+        cancelledAt: null,
+        cancelledByUserId: null,
+        notes: null,
+      });
+
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${noWaId}/send`)
+        .set('Authorization', `Bearer ${MANAGER_TOKEN()}`);
+
+      expect(res.status).toBe(422);
+      expect((res.body as ErrorBody).error).toBe('SUPPLIER_HAS_NO_WHATSAPP');
+    });
+
+    it('(SN3) Non-PENDING request → 409 INVALID_STATE_TRANSITION', async () => {
+      // REQ2 is SENT — cannot be sent again.
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${REQ2_ID}/send`)
+        .set('Authorization', `Bearer ${ADMIN_TOKEN()}`);
+
+      expect(res.status).toBe(409);
+      expect((res.body as ErrorBody).error).toBe('INVALID_STATE_TRANSITION');
+    });
+
+    it('(SN4) Concurrent CAS: first caller succeeds, second gets 409', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
+      const mod = (await import('../../src/shared/utils/prisma.js')) as any;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+      const { prisma: p } = mod;
+
+      // First call returns count=1 (wins the race); second returns count=0.
+      /* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
+      vi.mocked(p._mockTx.replenishmentRequest.updateMany)
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 });
+      /* eslint-enable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
+
+      const [res1, res2] = await Promise.all([
+        request(app)
+          .post(`/api/replenishment-requests/${REQ1_ID}/send`)
+          .set('Authorization', `Bearer ${ADMIN_TOKEN()}`),
+        request(app)
+          .post(`/api/replenishment-requests/${REQ1_ID}/send`)
+          .set('Authorization', `Bearer ${ADMIN_TOKEN()}`),
+      ]);
+
+      const statuses = [res1.status, res2.status].sort();
+      expect(statuses).toEqual([200, 409]);
+    });
+
+    it('(SN5) Twilio failure keeps SENT status (DB committed before notification)', async () => {
+      // Override notification service to reject.
+      __setNotificationService({
+        sendWhatsAppMessage: vi.fn().mockRejectedValue(new Error('Twilio unavailable')),
+      });
+
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${REQ1_ID}/send`)
+        .set('Authorization', `Bearer ${ADMIN_TOKEN()}`);
+
+      // DB transition succeeds regardless of Twilio failure.
+      expect(res.status).toBe(200);
+      expect((res.body as { request: RequestDto }).request.status).toBe('SENT');
+    });
+
+    it('(SN6) OPERATOR cannot send → 403', async () => {
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${REQ1_ID}/send`)
+        .set('Authorization', `Bearer ${OPERATOR_TOKEN()}`);
+
+      expect(res.status).toBe(403);
+    });
+
+    it('(SN7) Missing request → 404', async () => {
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${MISSING_REQ_ID}/send`)
+        .set('Authorization', `Bearer ${ADMIN_TOKEN()}`);
+
+      expect(res.status).toBe(404);
+      expect((res.body as ErrorBody).error).toBe('REPLENISHMENT_REQUEST_NOT_FOUND');
+    });
+  });
+
+  // ── RECEIVE smoke tests (task 3.5) ────────────────────────────────────────
+
+  describe('POST /api/replenishment-requests/:id/receive', () => {
+    it('(RV1) Default quantities: 1 IN movement created, stock updated', async () => {
+      // REQ2 is SENT with ITEM2 (PROD2, qty=20, stock=20).
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${REQ2_ID}/receive`)
+        .set('Authorization', `Bearer ${ADMIN_TOKEN()}`)
+        .send({}); // no overrides → default qty
+
+      expect(res.status).toBe(200);
+      const body = res.body as { request: RequestWithItemsDto };
+      expect(body.request.status).toBe('RECEIVED');
+      expect(body.request.receivedAt).not.toBeNull();
+      expect(body.request.receivedByUserId).toBe(ADMIN_ID);
+
+      // Stock should be updated in productStore.
+      const product = productStore.get(PROD2_ID);
+      expect(product?.stock).toBe(40); // 20 original + 20 received
+    });
+
+    it('(RV2) Partial receipt with override quantity', async () => {
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${REQ2_ID}/receive`)
+        .set('Authorization', `Bearer ${ADMIN_TOKEN()}`)
+        .send({ items: [{ id: ITEM2_ID, receivedQuantity: 7 }] });
+
+      expect(res.status).toBe(200);
+      const body = res.body as { request: RequestWithItemsDto };
+      expect(body.request.status).toBe('RECEIVED');
+
+      // Item receivedQuantity updated.
+      const item = itemStore.get(ITEM2_ID);
+      expect(item?.receivedQuantity).toBe(7);
+
+      // Stock: 20 + 7 = 27.
+      const product = productStore.get(PROD2_ID);
+      expect(product?.stock).toBe(27);
+    });
+
+    it('(RV3) receivedQuantity > requestedQuantity → 400 PARTIAL_RECEIPT_INVALID', async () => {
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${REQ2_ID}/receive`)
+        .set('Authorization', `Bearer ${ADMIN_TOKEN()}`)
+        .send({ items: [{ id: ITEM2_ID, receivedQuantity: 999 }] }); // 999 > 20
+
+      expect(res.status).toBe(400);
+      expect((res.body as ErrorBody).error).toBe('PARTIAL_RECEIPT_INVALID');
+    });
+
+    it('(RV4) Unknown item id in body → 400 REPLENISHMENT_ITEM_NOT_FOUND', async () => {
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${REQ2_ID}/receive`)
+        .set('Authorization', `Bearer ${ADMIN_TOKEN()}`)
+        .send({ items: [{ id: UNKNOWN_ITEM_ID, receivedQuantity: 5 }] });
+
+      expect(res.status).toBe(400);
+      expect((res.body as ErrorBody).error).toBe('REPLENISHMENT_ITEM_NOT_FOUND');
+    });
+
+    it('(RV5) Non-SENT request → 409 INVALID_STATE_TRANSITION', async () => {
+      // REQ1 is PENDING — cannot receive.
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${REQ1_ID}/receive`)
+        .set('Authorization', `Bearer ${ADMIN_TOKEN()}`)
+        .send({});
+
+      expect(res.status).toBe(409);
+      expect((res.body as ErrorBody).error).toBe('INVALID_STATE_TRANSITION');
+    });
+
+    it('(RV6) Concurrent idempotency: second receive on same request → 409', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
+      const mod = (await import('../../src/shared/utils/prisma.js')) as any;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+      const { prisma: p } = mod;
+
+      // Second caller's CAS returns count=0.
+      /* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
+      vi.mocked(p._mockTx.replenishmentRequest.updateMany)
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 });
+      /* eslint-enable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
+
+      const [res1, res2] = await Promise.all([
+        request(app)
+          .post(`/api/replenishment-requests/${REQ2_ID}/receive`)
+          .set('Authorization', `Bearer ${ADMIN_TOKEN()}`)
+          .send({}),
+        request(app)
+          .post(`/api/replenishment-requests/${REQ2_ID}/receive`)
+          .set('Authorization', `Bearer ${ADMIN_TOKEN()}`)
+          .send({}),
+      ]);
+
+      const statuses = [res1.status, res2.status].sort();
+      expect(statuses).toEqual([200, 409]);
+    });
+
+    it('(RV7) Missing request → 404', async () => {
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${MISSING_REQ_ID}/receive`)
+        .set('Authorization', `Bearer ${ADMIN_TOKEN()}`)
+        .send({});
+
+      expect(res.status).toBe(404);
+      expect((res.body as ErrorBody).error).toBe('REPLENISHMENT_REQUEST_NOT_FOUND');
+    });
+  });
+
+  // ── CANCEL smoke tests (task 3.6) ─────────────────────────────────────────
+
+  describe('POST /api/replenishment-requests/:id/cancel', () => {
+    it('(CA1) PENDING cancel is silent (no WhatsApp) → 200 CANCELLED', async () => {
+      const fakeSend = vi.fn().mockResolvedValue(undefined);
+      __setNotificationService({ sendWhatsAppMessage: fakeSend });
+
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${REQ1_ID}/cancel`)
+        .set('Authorization', `Bearer ${ADMIN_TOKEN()}`);
+
+      expect(res.status).toBe(200);
+      const body = res.body as { request: RequestDto };
+      expect(body.request.status).toBe('CANCELLED');
+      // No notification for PENDING cancel.
+      expect(fakeSend).not.toHaveBeenCalled();
+    });
+
+    it('(CA2) SENT cancel notifies supplier via WhatsApp', async () => {
+      const fakeSend = vi.fn().mockResolvedValue(undefined);
+      __setNotificationService({ sendWhatsAppMessage: fakeSend });
+
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${REQ2_ID}/cancel`)
+        .set('Authorization', `Bearer ${ADMIN_TOKEN()}`);
+
+      expect(res.status).toBe(200);
+      expect((res.body as { request: RequestDto }).request.status).toBe('CANCELLED');
+
+      // Allow fire-and-forget microtask to settle.
+      await Promise.resolve();
+      expect(fakeSend).toHaveBeenCalledOnce();
+    });
+
+    it('(CA3) Twilio failure on SENT cancel keeps CANCELLED DB state', async () => {
+      __setNotificationService({
+        sendWhatsAppMessage: vi.fn().mockRejectedValue(new Error('Twilio down')),
+      });
+
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${REQ2_ID}/cancel`)
+        .set('Authorization', `Bearer ${ADMIN_TOKEN()}`);
+
+      // DB transition committed regardless of Twilio error.
+      expect(res.status).toBe(200);
+      expect((res.body as { request: RequestDto }).request.status).toBe('CANCELLED');
+    });
+
+    it('(CA4) RECEIVED (terminal) → 409 INVALID_STATE_TRANSITION', async () => {
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${REQ3_ID}/cancel`)
+        .set('Authorization', `Bearer ${ADMIN_TOKEN()}`);
+
+      expect(res.status).toBe(409);
+      expect((res.body as ErrorBody).error).toBe('INVALID_STATE_TRANSITION');
+    });
+
+    it('(CA5) CANCELLED (terminal) → 409 INVALID_STATE_TRANSITION', async () => {
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${REQ4_ID}/cancel`)
+        .set('Authorization', `Bearer ${ADMIN_TOKEN()}`);
+
+      expect(res.status).toBe(409);
+      expect((res.body as ErrorBody).error).toBe('INVALID_STATE_TRANSITION');
+    });
+
+    it('(CA6) Missing request → 404', async () => {
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${MISSING_REQ_ID}/cancel`)
+        .set('Authorization', `Bearer ${ADMIN_TOKEN()}`);
+
+      expect(res.status).toBe(404);
+      expect((res.body as ErrorBody).error).toBe('REPLENISHMENT_REQUEST_NOT_FOUND');
+    });
+
+    it('(CA7) OPERATOR cannot cancel → 403', async () => {
+      const res = await request(app)
+        .post(`/api/replenishment-requests/${REQ1_ID}/cancel`)
+        .set('Authorization', `Bearer ${OPERATOR_TOKEN()}`);
+
+      expect(res.status).toBe(403);
     });
   });
 });
