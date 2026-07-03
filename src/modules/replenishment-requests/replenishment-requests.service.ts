@@ -402,17 +402,37 @@ export class ReplenishmentRequestsService {
           select: { id: true, stock: true, active: true },
         });
 
-        if (!product) continue; // product deleted between create and receive — skip gracefully
+        if (!product) {
+          // Product row was deleted between the request being created and received.
+          // Treat as a transactional failure — abort the entire receive so no
+          // partial stock updates or movements are committed (design §RECEIVE).
+          throw new AppError(
+            ERROR_CODES.PRODUCT_NOT_FOUND,
+            404,
+            `Product ${item.productId} not found during receive of request ${id}.`,
+          );
+        }
 
         const observedStock = product.stock;
         const nextStock = observedStock + receivedQty;
 
-        await inventoryMovementsRepository.attemptStockUpdate(
+        // Fix 1: CAS result MUST be checked — count===0 means a concurrent
+        // transaction already changed this product's stock between our read and
+        // write. Throw to abort the $transaction so nothing is half-applied.
+        const stockCount = await inventoryMovementsRepository.attemptStockUpdate(
           tx,
           item.productId,
           observedStock,
           nextStock,
         );
+
+        if (stockCount === 0) {
+          throw new AppError(
+            ERROR_CODES.INVALID_STATE_TRANSITION,
+            409,
+            `Stock CAS failed for product ${item.productId} during receive of request ${id}. Concurrent update detected.`,
+          );
+        }
 
         await inventoryMovementsRepository.insertMovement(tx, {
           productId: item.productId,
