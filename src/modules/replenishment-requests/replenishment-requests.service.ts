@@ -1,28 +1,41 @@
 /**
  * ReplenishmentRequestsService — business logic for the replenishment-requests module.
  *
- * Responsibilities (Phase 1 — read side):
+ * Responsibilities:
  *   - create()            Resolve unitPrices, persist request + items.
  *   - list()              Paginated global list with filters.
  *   - getById()           Point read with 404 guard.
  *   - listBySupplier()    Supplier-scoped paginated list.
- *
- * Phase 2 (state transitions) — added in PR 2:
- *   send, receive, cancel.
+ *   - send()              Transition PENDING → SENT; fire WhatsApp after commit.
+ *   - receive()           Transition SENT → RECEIVED in a single $transaction with stock posting.
+ *   - cancel()            Transition PENDING|SENT → CANCELLED; fire WhatsApp only when prior SENT.
  *
  * unitPrice resolution (spec §Create Request):
  *   1. Use the unitPrice provided in the request body item.
  *   2. If absent, look up ProductSupplier.referencePrice(supplierId, productId).
  *   3. If neither exists → 400 UNIT_PRICE_REQUIRED; nothing is persisted.
  *
+ * Twilio timing: fire-and-forget AFTER commit (.catch(logger.error)).
+ *   DB truth > delivery guarantee (design §Architecture Decisions).
+ *
  * This service does NOT import Express. Consumed by replenishment-requests.controller.ts.
  */
 import { AppError } from '../../shared/errors/AppError.js';
 import { ERROR_CODES } from '../../shared/errors/errorCodes.js';
+import { prisma } from '../../shared/utils/prisma.js';
+import logger from '../../shared/logger/index.js';
+import {
+  notificationService,
+  normalizeE164,
+  buildSentTemplate,
+  buildCancelledTemplate,
+} from '../../shared/notifications/index.js';
+import { inventoryMovementsRepository } from '../inventory-movements/inventory-movements.repository.js';
 import { replenishmentRequestsRepository } from './replenishment-requests.repository.js';
 import type {
   CreateReplenishmentRequestBody,
   ListReplenishmentRequestsQuery,
+  ReceiveReplenishmentRequestBody,
   ReplenishmentRequestDto,
   ReplenishmentRequestWithItemsDto,
   ReplenishmentRequestItemDto,
@@ -216,6 +229,289 @@ export class ReplenishmentRequestsService {
     });
 
     return paginateRequests(rows.map(toDto), total, page, pageSize);
+  }
+
+  // ── Send (PENDING → SENT) ──────────────────────────────────────────────────
+
+  /**
+   * Transition a PENDING request to SENT and fire a WhatsApp notification.
+   *
+   * Flow:
+   *  1. Load request — 404 if missing.
+   *  2. Pre-check supplier.whatsapp — 422 SUPPLIER_HAS_NO_WHATSAPP if blank.
+   *  3. Status-CAS PENDING → SENT in a minimal $transaction (no stock changes).
+   *  4. Respond with the updated DTO.
+   *  5. Fire-and-forget WhatsApp AFTER response is built (.catch(logger.error)).
+   *
+   * Notification failure does NOT roll back the DB (design §Twilio timing).
+   *
+   * @param id      Replenishment request id.
+   * @param actorId Authenticated user id performing the send.
+   */
+  async send(id: string, actorId: string): Promise<ReplenishmentRequestWithItemsDto> {
+    // 1. Load request with items (need items for the WhatsApp template).
+    const existing = await replenishmentRequestsRepository.findById(id, { includeItems: true });
+
+    if (!existing) {
+      throw new AppError(
+        ERROR_CODES.REPLENISHMENT_REQUEST_NOT_FOUND,
+        404,
+        `Replenishment request not found: ${id}.`,
+      );
+    }
+
+    const withItems = existing as ReplenishmentRequestWithItemsRow;
+
+    // 2. Pre-check supplier WhatsApp — load supplier record for phone + name.
+    const supplier = await prisma.supplier.findUnique({
+      where: { id: withItems.supplierId },
+      select: { id: true, name: true, whatsapp: true },
+    });
+
+    if (!supplier?.whatsapp || normalizeE164(supplier.whatsapp) === null) {
+      throw new AppError(
+        ERROR_CODES.SUPPLIER_HAS_NO_WHATSAPP,
+        422,
+        `Supplier ${withItems.supplierId} has no valid WhatsApp number.`,
+      );
+    }
+
+    const whatsappTo = `whatsapp:${normalizeE164(supplier.whatsapp)}`;
+
+    // 3. Status-CAS: PENDING → SENT.
+    const count = await prisma.$transaction(async (tx) => {
+      return replenishmentRequestsRepository.transitionToSent(tx, id, actorId);
+    });
+
+    if (count === 0) {
+      throw new AppError(
+        ERROR_CODES.INVALID_STATE_TRANSITION,
+        409,
+        `Cannot send request ${id}: it is not in PENDING status or was concurrently updated.`,
+      );
+    }
+
+    // 4. Reload and return updated DTO.
+    const updated = await replenishmentRequestsRepository.findById(id, { includeItems: true });
+    const dto = toWithItemsDto(updated as ReplenishmentRequestWithItemsRow);
+
+    // 5. Fire-and-forget WhatsApp notification AFTER DB is committed.
+    const body = buildSentTemplate(
+      {
+        id,
+        items: withItems.items.map((item) => ({
+          requestedQuantity: item.requestedQuantity,
+          unitPrice: item.unitPrice,
+        })),
+      },
+      { name: supplier.name },
+    );
+
+    notificationService
+      .sendWhatsAppMessage(whatsappTo, body)
+      .catch((err: unknown) =>
+        logger.error({ err, requestId: id }, 'WhatsApp SEND notification failed'),
+      );
+
+    return dto;
+  }
+
+  // ── Receive (SENT → RECEIVED) ──────────────────────────────────────────────
+
+  /**
+   * Transition a SENT request to RECEIVED, posting IN inventory movements.
+   *
+   * All DB operations run in a single $transaction (spec §Receive, design §RECEIVE):
+   *  1. Status-CAS SENT → RECEIVED (stamps receivedAt, receivedByUserId).
+   *  2. For each item: resolve received quantity, validate range, update item,
+   *     attempt stock update (CAS), insert IN movement.
+   *  3. Return the fully updated DTO with items.
+   *
+   * No WhatsApp notification on RECEIVE (spec §Receive).
+   *
+   * @param id      Replenishment request id.
+   * @param actorId Authenticated user id performing the receive.
+   * @param body    Optional item overrides for received quantities.
+   */
+  async receive(
+    id: string,
+    actorId: string,
+    body: ReceiveReplenishmentRequestBody,
+  ): Promise<ReplenishmentRequestWithItemsDto> {
+    // Load request with items before starting the transaction.
+    const existing = await replenishmentRequestsRepository.findById(id, { includeItems: true });
+
+    if (!existing) {
+      throw new AppError(
+        ERROR_CODES.REPLENISHMENT_REQUEST_NOT_FOUND,
+        404,
+        `Replenishment request not found: ${id}.`,
+      );
+    }
+
+    const withItems = existing as ReplenishmentRequestWithItemsRow;
+
+    // Validate body item overrides before entering the transaction.
+    // Any unknown item id must abort immediately (spec §Receive — REPLENISHMENT_ITEM_NOT_FOUND).
+    if (body.items) {
+      for (const override of body.items) {
+        const found = withItems.items.find((i) => i.id === override.id);
+        if (!found) {
+          throw new AppError(
+            ERROR_CODES.REPLENISHMENT_ITEM_NOT_FOUND,
+            400,
+            `Item ${override.id} does not belong to request ${id}.`,
+          );
+        }
+        // Validate receivedQuantity range: 0 ≤ qty ≤ requestedQuantity.
+        const qty = override.receivedQuantity ?? found.requestedQuantity;
+        if (qty < 0 || qty > found.requestedQuantity) {
+          throw new AppError(
+            ERROR_CODES.PARTIAL_RECEIPT_INVALID,
+            400,
+            `receivedQuantity ${qty} for item ${override.id} is out of range [0, ${found.requestedQuantity}].`,
+          );
+        }
+      }
+    }
+
+    // Run the entire RECEIVE flow in one transaction.
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. CAS: SENT → RECEIVED.
+      const count = await replenishmentRequestsRepository.transitionToReceived(tx, id, actorId);
+
+      if (count === 0) {
+        throw new AppError(
+          ERROR_CODES.INVALID_STATE_TRANSITION,
+          409,
+          `Cannot receive request ${id}: it is not in SENT status or was concurrently updated.`,
+        );
+      }
+
+      // 2. Process each item: update receivedQuantity + post IN movement.
+      for (const item of withItems.items) {
+        const override = body.items?.find((o) => o.id === item.id);
+        const receivedQty = override?.receivedQuantity ?? item.requestedQuantity;
+
+        // Persist receivedQuantity on the item.
+        await replenishmentRequestsRepository.updateItemReceivedQuantity(tx, item.id, receivedQty);
+
+        // Post IN movement: read current stock, attempt CAS, insert movement.
+        const product = await tx.product.findUnique({
+          where: { id: item.productId },
+          select: { id: true, stock: true, active: true },
+        });
+
+        if (!product) continue; // product deleted between create and receive — skip gracefully
+
+        const observedStock = product.stock;
+        const nextStock = observedStock + receivedQty;
+
+        await inventoryMovementsRepository.attemptStockUpdate(
+          tx,
+          item.productId,
+          observedStock,
+          nextStock,
+        );
+
+        await inventoryMovementsRepository.insertMovement(tx, {
+          productId: item.productId,
+          userId: actorId,
+          type: 'IN',
+          adjustmentDirection: null,
+          quantity: receivedQty,
+          resultingStock: nextStock,
+          reason: `Received from replenishment request #${id}`,
+        });
+      }
+
+      // 3. Return updated request with items for DTO mapping.
+      return replenishmentRequestsRepository.findById(id, { includeItems: true });
+    });
+
+    return toWithItemsDto(result as ReplenishmentRequestWithItemsRow);
+  }
+
+  // ── Cancel (PENDING|SENT → CANCELLED) ─────────────────────────────────────
+
+  /**
+   * Transition a PENDING or SENT request to CANCELLED.
+   *
+   * Flow:
+   *  1. Load request — 404 if missing.
+   *  2. Guard: RECEIVED and CANCELLED are terminal — reject with 409.
+   *  3. Status-CAS (priorStatus) → CANCELLED.
+   *  4. If prior status was SENT, fire-and-forget WhatsApp CANCELLED notification.
+   *
+   * No notification when cancelling a PENDING request (spec §Cancel).
+   *
+   * @param id      Replenishment request id.
+   * @param actorId Authenticated user id performing the cancellation.
+   */
+  async cancel(id: string, actorId: string): Promise<ReplenishmentRequestWithItemsDto> {
+    // 1. Load request with items (need items for potential WhatsApp template).
+    const existing = await replenishmentRequestsRepository.findById(id, { includeItems: true });
+
+    if (!existing) {
+      throw new AppError(
+        ERROR_CODES.REPLENISHMENT_REQUEST_NOT_FOUND,
+        404,
+        `Replenishment request not found: ${id}.`,
+      );
+    }
+
+    const withItems = existing as ReplenishmentRequestWithItemsRow;
+    const priorStatus = withItems.status;
+
+    // 2. Guard against terminal states.
+    if (priorStatus === 'RECEIVED' || priorStatus === 'CANCELLED') {
+      throw new AppError(
+        ERROR_CODES.INVALID_STATE_TRANSITION,
+        409,
+        `Cannot cancel request ${id}: current status '${priorStatus}' is terminal.`,
+      );
+    }
+
+    // At this point priorStatus is narrowed to 'PENDING' | 'SENT' by the guard above.
+    // 3. Status-CAS: priorStatus → CANCELLED.
+    const count = await prisma.$transaction(async (tx) => {
+      return replenishmentRequestsRepository.transitionToCancelled(tx, id, actorId, priorStatus);
+    });
+
+    if (count === 0) {
+      throw new AppError(
+        ERROR_CODES.INVALID_STATE_TRANSITION,
+        409,
+        `Cannot cancel request ${id}: it was concurrently updated.`,
+      );
+    }
+
+    // 4. Reload and build DTO.
+    const updated = await replenishmentRequestsRepository.findById(id, { includeItems: true });
+    const dto = toWithItemsDto(updated as ReplenishmentRequestWithItemsRow);
+
+    // 5. Fire-and-forget WhatsApp ONLY when prior status was SENT.
+    if (priorStatus === 'SENT') {
+      const supplier = await prisma.supplier.findUnique({
+        where: { id: withItems.supplierId },
+        select: { name: true, whatsapp: true },
+      });
+
+      const normalizedPhone = supplier?.whatsapp ? normalizeE164(supplier.whatsapp) : null;
+
+      if (normalizedPhone) {
+        const whatsappTo = `whatsapp:${normalizedPhone}`;
+        const body = buildCancelledTemplate({ id, items: [] }, { name: supplier!.name });
+
+        notificationService
+          .sendWhatsAppMessage(whatsappTo, body)
+          .catch((err: unknown) =>
+            logger.error({ err, requestId: id }, 'WhatsApp CANCEL notification failed'),
+          );
+      }
+    }
+
+    return dto;
   }
 }
 

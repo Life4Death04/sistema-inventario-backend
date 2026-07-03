@@ -12,22 +12,21 @@
  *   - express-async-errors forwards thrown errors to the global errorHandler.
  *   - This controller does NOT catch AppErrors — let them bubble.
  *
- * Phase 1 handlers (read side):
- *   createReplenishmentRequestController
- *   listReplenishmentRequestsController
- *   getReplenishmentRequestController
- *   listReplenishmentRequestsBySupplierController
- *
- * Phase 2 handlers (state transitions) — added in PR 2:
- *   sendReplenishmentRequestController
- *   receiveReplenishmentRequestController
- *   cancelReplenishmentRequestController
+ * Handlers:
+ *   createReplenishmentRequestController       POST /
+ *   listReplenishmentRequestsController        GET /
+ *   getReplenishmentRequestController          GET /:id
+ *   listReplenishmentRequestsBySupplierController  GET /api/suppliers/:supplierId/…
+ *   sendReplenishmentRequestController         POST /:id/send
+ *   receiveReplenishmentRequestController      POST /:id/receive
+ *   cancelReplenishmentRequestController       POST /:id/cancel
  */
 import type { Request, Response } from 'express';
 import { replenishmentRequestsService } from './replenishment-requests.service.js';
 import type {
   CreateReplenishmentRequestBody,
   ListReplenishmentRequestsQuery,
+  ReceiveReplenishmentRequestBody,
   ReplenishmentRequestIdParams,
   SupplierIdParams,
 } from './replenishment-requests.schema.js';
@@ -99,4 +98,58 @@ export async function listReplenishmentRequestsBySupplierController(
   const query = req.query as unknown as ListReplenishmentRequestsQuery;
   const result = await replenishmentRequestsService.listBySupplier(supplierId, query);
   res.status(200).json(result);
+}
+
+// ── POST /api/replenishment-requests/:id/send ─────────────────────────────────
+
+/**
+ * Transition a PENDING request to SENT and notify the supplier via WhatsApp.
+ * Returns 200 with { request } containing the updated DTO.
+ * Roles: ADMIN, MANAGER (enforced by route middleware).
+ */
+export async function sendReplenishmentRequestController(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const { id } = req.params as ReplenishmentRequestIdParams;
+  const { id: actorId } = req.user!;
+  const request = await replenishmentRequestsService.send(id, actorId);
+  res.status(200).json({ request });
+}
+
+// ── POST /api/replenishment-requests/:id/receive ──────────────────────────────
+
+/**
+ * Transition a SENT request to RECEIVED.
+ * Posts one IN InventoryMovement per item inside a single $transaction.
+ * Returns 200 with { request } containing the fully updated DTO with items.
+ * Roles: ADMIN, MANAGER (enforced by route middleware).
+ */
+export async function receiveReplenishmentRequestController(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const { id } = req.params as ReplenishmentRequestIdParams;
+  const { id: actorId } = req.user!;
+  const body = req.body as ReceiveReplenishmentRequestBody;
+  const request = await replenishmentRequestsService.receive(id, actorId, body);
+  res.status(200).json({ request });
+}
+
+// ── POST /api/replenishment-requests/:id/cancel ───────────────────────────────
+
+/**
+ * Transition a PENDING or SENT request to CANCELLED.
+ * Fires a WhatsApp CANCELLED notification only when prior status was SENT.
+ * Returns 200 with { request } containing the updated DTO.
+ * Roles: ADMIN, MANAGER (enforced by route middleware).
+ */
+export async function cancelReplenishmentRequestController(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const { id } = req.params as ReplenishmentRequestIdParams;
+  const { id: actorId } = req.user!;
+  const request = await replenishmentRequestsService.cancel(id, actorId);
+  res.status(200).json({ request });
 }
