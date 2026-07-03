@@ -54,13 +54,13 @@ Chain strategy: feature-branch-chain
 - [x] 2.9 Add smoke tests in `tests/smoke/replenishment-requests.test.ts` for create, filtered list, get-by-id 404, supplier list, and create role gating with fully mocked Prisma.
 
 ## Phase 3: State transitions + Twilio wiring
-- [ ] 3.1 Extend the repository with `transitionToSent`, `transitionToReceived`, `transitionToCancelled`, and `updateItemReceivedQuantity`; keep received stock posting in service transaction composition.
-- [ ] 3.2 Extend the service with `send`, `receive`, and `cancel`; run RECEIVE in `prisma.$transaction`, and fire WhatsApp after commit for SEND and SENT→CANCELLED.
-- [ ] 3.3 Extend the controller and routes with `POST /:id/send`, `POST /:id/receive`, and `POST /:id/cancel`.
-- [ ] 3.4 Add smoke tests for SEND: happy path, missing WhatsApp 422, non-PENDING 409, concurrent CAS (`count:1` then `count:0`), and Twilio failure keeping `SENT`.
-- [ ] 3.5 Add smoke tests for RECEIVE: default quantities with 2 IN movements + stock delta, partial receipt, `PARTIAL_RECEIPT_INVALID`, unknown item id, non-SENT 409, and concurrent idempotency.
-- [ ] 3.6 Add smoke tests for CANCEL: PENDING silent, SENT notifies, Twilio failure keeps `CANCELLED`, and terminal-state 409.
-- [ ] 3.7 Add unit tests for `NotificationService` using fake `twilio.messages.create` success and reject branches.
+- [x] 3.1 Extend the repository with `transitionToSent`, `transitionToReceived`, `transitionToCancelled`, and `updateItemReceivedQuantity`; keep received stock posting in service transaction composition.
+- [x] 3.2 Extend the service with `send`, `receive`, and `cancel`; run RECEIVE in `prisma.$transaction`, and fire WhatsApp after commit for SEND and SENT→CANCELLED.
+- [x] 3.3 Extend the controller and routes with `POST /:id/send`, `POST /:id/receive`, and `POST /:id/cancel`.
+- [x] 3.4 Add smoke tests for SEND: happy path, missing WhatsApp 422, non-PENDING 409, concurrent CAS (`count:1` then `count:0`), and Twilio failure keeping `SENT`.
+- [x] 3.5 Add smoke tests for RECEIVE: default quantities with 2 IN movements + stock delta, partial receipt, `PARTIAL_RECEIPT_INVALID`, unknown item id, non-SENT 409, and concurrent idempotency.
+- [x] 3.6 Add smoke tests for CANCEL: PENDING silent, SENT notifies, Twilio failure keeps `CANCELLED`, and terminal-state 409.
+- [x] 3.7 Add unit tests for `NotificationService` using fake `twilio.messages.create` success and reject branches.
 
 ## Review Workload Forecast
 | Phase | Prod LOC | Test LOC |
