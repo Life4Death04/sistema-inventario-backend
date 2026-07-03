@@ -1,15 +1,13 @@
 /**
- * Replenishment requests router — mounts Phase 1 (read side) endpoints.
+ * Replenishment requests router.
  *
  * Route table:
  *   POST  /                      Create request          (ADMIN, MANAGER)
- *   GET   /                      List requests           (ADMIN, MANAGER, OPERATOR)
- *   GET   /:id                   Get by id               (ADMIN, MANAGER, OPERATOR)
- *
- * Phase 2 routes (state transitions) — added in PR 2:
- *   POST  /:id/send              Transition PENDING → SENT
- *   POST  /:id/receive           Transition SENT → RECEIVED
- *   POST  /:id/cancel            Transition PENDING|SENT → CANCELLED
+ *   GET   /                      List requests           (any authenticated)
+ *   GET   /:id                   Get by id               (any authenticated)
+ *   POST  /:id/send              Transition PENDING → SENT        (ADMIN, MANAGER)
+ *   POST  /:id/receive           Transition SENT → RECEIVED       (ADMIN, MANAGER)
+ *   POST  /:id/cancel            Transition PENDING|SENT → CANCELLED  (ADMIN, MANAGER)
  *
  * Middleware chain:
  *   authenticate → requireRole → validate → controller
@@ -26,11 +24,15 @@ import {
   createReplenishmentRequestSchema,
   listReplenishmentRequestsQuerySchema,
   replenishmentRequestIdParamsSchema,
+  receiveReplenishmentRequestSchema,
 } from './replenishment-requests.schema.js';
 import {
   createReplenishmentRequestController,
   listReplenishmentRequestsController,
   getReplenishmentRequestController,
+  sendReplenishmentRequestController,
+  receiveReplenishmentRequestController,
+  cancelReplenishmentRequestController,
 } from './replenishment-requests.controller.js';
 
 export const replenishmentRequestsRouter = Router();
@@ -61,4 +63,35 @@ replenishmentRequestsRouter.get(
   authenticate,
   validate(replenishmentRequestIdParamsSchema, 'params'),
   getReplenishmentRequestController as RequestHandler,
+);
+
+// ── POST /api/replenishment-requests/:id/send ─────────────────────────────────
+
+replenishmentRequestsRouter.post(
+  '/:id/send',
+  authenticate,
+  requireRole('ADMIN', 'MANAGER'),
+  validate(replenishmentRequestIdParamsSchema, 'params'),
+  sendReplenishmentRequestController as RequestHandler,
+);
+
+// ── POST /api/replenishment-requests/:id/receive ──────────────────────────────
+
+replenishmentRequestsRouter.post(
+  '/:id/receive',
+  authenticate,
+  requireRole('ADMIN', 'MANAGER'),
+  validate(replenishmentRequestIdParamsSchema, 'params'),
+  validate(receiveReplenishmentRequestSchema, 'body'),
+  receiveReplenishmentRequestController as RequestHandler,
+);
+
+// ── POST /api/replenishment-requests/:id/cancel ───────────────────────────────
+
+replenishmentRequestsRouter.post(
+  '/:id/cancel',
+  authenticate,
+  requireRole('ADMIN', 'MANAGER'),
+  validate(replenishmentRequestIdParamsSchema, 'params'),
+  cancelReplenishmentRequestController as RequestHandler,
 );

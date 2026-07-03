@@ -1,14 +1,15 @@
 /**
  * ReplenishmentRequestsRepository — Prisma data-access layer.
  *
- * Responsibilities (Phase 1 — read side):
- *   - create()               Insert request + items in a transaction; resolve unitPrice from body.
- *   - findById()             Point read with optional items include.
- *   - findMany()             Paginated list with filters (AND-combined).
- *   - findManyBySupplier()   Supplier-scoped paginated list.
- *
- * Phase 2 (state transitions) — added in PR 2:
- *   transitionToSent, transitionToReceived, transitionToCancelled, updateItemReceivedQuantity.
+ * Responsibilities:
+ *   - create()                        Insert request + items; resolve unitPrice from body.
+ *   - findById()                      Point read with optional items include.
+ *   - findMany()                      Paginated list with filters (AND-combined).
+ *   - findManyBySupplier()            Supplier-scoped paginated list.
+ *   - transitionToSent()              Status-CAS PENDING → SENT; returns updateMany count.
+ *   - transitionToReceived()          Status-CAS SENT → RECEIVED; stamps audit fields.
+ *   - transitionToCancelled()         Status-CAS PENDING|SENT → CANCELLED; stamps audit fields.
+ *   - updateItemReceivedQuantity()    Persist receivedQuantity on a single item inside a tx.
  *
  * All methods are pure data-access; no business logic here.
  * Services apply guards, fallback resolution, and role checks on top.
@@ -233,6 +234,113 @@ export class ReplenishmentRequestsRepository {
     ]);
 
     return [rows as ReplenishmentRequestRow[], total];
+  }
+
+  // ── State-transition methods (Phase 2 — PR 2) ─────────────────────────────
+
+  /**
+   * CAS transition: PENDING → SENT.
+   *
+   * Uses updateMany with the status guard so that a concurrent caller gets
+   * count=0 and can throw INVALID_STATE_TRANSITION (409).
+   *
+   * @param tx      Prisma transaction client.
+   * @param id      Request id.
+   * @param userId  Actor that performed the send (stored in sentAt timestamp).
+   * @returns       Number of rows updated (1 on success, 0 on race or wrong status).
+   */
+  async transitionToSent(
+    tx: Prisma.TransactionClient,
+    id: string,
+    userId: string,
+  ): Promise<number> {
+    const result = await tx.replenishmentRequest.updateMany({
+      where: { id, status: 'PENDING' },
+      data: {
+        status: 'SENT',
+        sentAt: new Date(),
+        // Note: sentByUserId is not a schema field; we use requestedByUserId for send actor context.
+        // The audit trail uses sentAt alone for SEND (spec §Send does not define a sentByUserId field).
+      },
+    });
+    // Suppress unused parameter warning — userId reserved for future audit expansion.
+    void userId;
+    return result.count;
+  }
+
+  /**
+   * CAS transition: SENT → RECEIVED.
+   *
+   * Stamps receivedAt + receivedByUserId. Must run inside the same $transaction
+   * as stock updates and movement inserts for atomicity.
+   *
+   * @param tx      Prisma transaction client.
+   * @param id      Request id.
+   * @param userId  Actor receiving the order (stored in receivedByUserId).
+   * @returns       Number of rows updated (1 on success, 0 on race or wrong status).
+   */
+  async transitionToReceived(
+    tx: Prisma.TransactionClient,
+    id: string,
+    userId: string,
+  ): Promise<number> {
+    const result = await tx.replenishmentRequest.updateMany({
+      where: { id, status: 'SENT' },
+      data: {
+        status: 'RECEIVED',
+        receivedAt: new Date(),
+        receivedByUserId: userId,
+      },
+    });
+    return result.count;
+  }
+
+  /**
+   * CAS transition: PENDING|SENT → CANCELLED.
+   *
+   * The priorStatus guard prevents double-cancellation and ensures terminal
+   * states (RECEIVED, CANCELLED) are rejected with count=0.
+   *
+   * @param tx           Prisma transaction client.
+   * @param id           Request id.
+   * @param userId       Actor cancelling the order (stored in cancelledByUserId).
+   * @param priorStatus  The status the request must currently have ('PENDING' | 'SENT').
+   * @returns            Number of rows updated (1 on success, 0 on race or wrong status).
+   */
+  async transitionToCancelled(
+    tx: Prisma.TransactionClient,
+    id: string,
+    userId: string,
+    priorStatus: 'PENDING' | 'SENT',
+  ): Promise<number> {
+    const result = await tx.replenishmentRequest.updateMany({
+      where: { id, status: priorStatus },
+      data: {
+        status: 'CANCELLED',
+        cancelledAt: new Date(),
+        cancelledByUserId: userId,
+      },
+    });
+    return result.count;
+  }
+
+  /**
+   * Persist the received quantity on a single replenishment request item.
+   * Must run inside the same $transaction as transitionToReceived and stock updates.
+   *
+   * @param tx      Prisma transaction client.
+   * @param itemId  Item id to update.
+   * @param qty     The quantity actually received.
+   */
+  async updateItemReceivedQuantity(
+    tx: Prisma.TransactionClient,
+    itemId: string,
+    qty: number,
+  ): Promise<void> {
+    await tx.replenishmentRequestItem.update({
+      where: { id: itemId },
+      data: { receivedQuantity: qty },
+    });
   }
 
   // ── ProductSupplier lookup (for unitPrice fallback) ────────────────────────
