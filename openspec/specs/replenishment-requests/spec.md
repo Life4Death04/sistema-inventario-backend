@@ -48,13 +48,19 @@ The system MUST create `PENDING` requests with ≥1 item, resolving each `unitPr
 
 The system MUST expose paginated listing with filters, a detail endpoint embedding items, and a supplier-scoped list.
 
+The request representation MUST preserve the existing foreign-key ids (`supplierId`, `requestedByUserId`, `productId`) and enrich responses with readable summaries:
+- request summary fields: `supplier { id, name }`, `requestedByUser { id, fullName }`, `itemsCount`, `estimatedTotal`
+- request detail item fields: `product { id, name, code }`
+
 #### Scenario: Paginated list with filters
 - WHEN MANAGER calls `GET /api/replenishment-requests?status=SENT&supplierId=…&dateFrom=…&dateTo=…&page=1&pageSize=20`
 - THEN 200 with only matching requests plus pagination metadata
+- AND each request includes `supplier`, `requestedByUser`, `itemsCount`, and `estimatedTotal`
 
 #### Scenario: Get by id embeds items
 - WHEN `GET /api/replenishment-requests/:id` on existing request
 - THEN 200 with request and `items[]` embedded
+- AND each item includes `product` while preserving `productId`
 
 #### Scenario: Get by id missing
 - WHEN id does not exist

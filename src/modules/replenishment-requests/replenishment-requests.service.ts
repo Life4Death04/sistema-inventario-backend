@@ -21,6 +21,7 @@
  * This service does NOT import Express. Consumed by replenishment-requests.controller.ts.
  */
 import { AppError } from '../../shared/errors/AppError.js';
+import { Prisma } from '@prisma/client';
 import { ERROR_CODES } from '../../shared/errors/errorCodes.js';
 import { prisma } from '../../shared/utils/prisma.js';
 import logger from '../../shared/logger/index.js';
@@ -37,9 +38,10 @@ import type {
   CreateReplenishmentRequestBody,
   ListReplenishmentRequestsQuery,
   ReceiveReplenishmentRequestBody,
+  ReplenishmentProductSummaryDto,
   ReplenishmentRequestDto,
-  ReplenishmentRequestWithItemsDto,
   ReplenishmentRequestItemDto,
+  ReplenishmentRequestWithItemsDto,
   PaginatedReplenishmentRequestsResponse,
 } from './replenishment-requests.schema.js';
 import type {
@@ -57,12 +59,60 @@ function toIso(date: Date | null): string | null {
   return date ? date.toISOString() : null;
 }
 
+function toProductSummaryDto(
+  product: ReplenishmentRequestItemRow['product'],
+): ReplenishmentProductSummaryDto {
+  return {
+    id: product.id,
+    name: product.name,
+    code: product.code,
+  };
+}
+
+function toDecimalString(
+  value: Prisma.Decimal | { toNumber(): number } | { toString(): string },
+): string {
+  if (typeof value === 'object' && 'toNumber' in value) {
+    return value.toNumber().toString();
+  }
+
+  return value.toString();
+}
+
+function calculateRequestMetrics(
+  items: Array<{
+    requestedQuantity: number;
+    unitPrice: Prisma.Decimal | { toNumber(): number } | { toString(): string };
+  }>,
+): {
+  itemsCount: number;
+  estimatedTotal: string;
+} {
+  const estimatedTotal = items.reduce(
+    (total, item) =>
+      total.plus(new Prisma.Decimal(toDecimalString(item.unitPrice)).mul(item.requestedQuantity)),
+    new Prisma.Decimal(0),
+  );
+
+  return {
+    itemsCount: items.length,
+    estimatedTotal: estimatedTotal.toString(),
+  };
+}
+
 /** Map a raw request row to the API DTO (no items). */
 function toDto(row: ReplenishmentRequestRow): ReplenishmentRequestDto {
+  const { itemsCount, estimatedTotal } = calculateRequestMetrics(row.items);
+
   return {
     id: row.id,
     supplierId: row.supplierId,
     requestedByUserId: row.requestedByUserId,
+    supplier: row.supplier,
+    requestedByUser: {
+      id: row.requestedByUser.id,
+      fullName: row.requestedByUser.fullName,
+    },
     status: row.status,
     requestedAt: row.requestedAt.toISOString(),
     sentAt: toIso(row.sentAt),
@@ -71,6 +121,8 @@ function toDto(row: ReplenishmentRequestRow): ReplenishmentRequestDto {
     cancelledAt: toIso(row.cancelledAt),
     cancelledByUserId: row.cancelledByUserId,
     notes: row.notes,
+    itemsCount,
+    estimatedTotal,
   };
 }
 
@@ -79,6 +131,7 @@ function toItemDto(item: ReplenishmentRequestItemRow): ReplenishmentRequestItemD
   return {
     id: item.id,
     productId: item.productId,
+    product: toProductSummaryDto(item.product),
     requestedQuantity: item.requestedQuantity,
     receivedQuantity: item.receivedQuantity,
     unitPrice: item.unitPrice.toNumber(),

@@ -22,7 +22,23 @@ import type { ListReplenishmentRequestsQuery } from './replenishment-requests.sc
 // Select constants
 // ---------------------------------------------------------------------------
 
-/** Fields selected for a request row (no items). */
+const SUPPLIER_SUMMARY_SELECT = {
+  id: true,
+  name: true,
+} as const;
+
+const USER_SUMMARY_SELECT = {
+  id: true,
+  fullName: true,
+} as const;
+
+const PRODUCT_SUMMARY_SELECT = {
+  id: true,
+  name: true,
+  code: true,
+} as const;
+
+/** Fields selected for a request row (base scalar fields). */
 const REQUEST_SELECT = {
   id: true,
   supplierId: true,
@@ -37,6 +53,11 @@ const REQUEST_SELECT = {
   notes: true,
 } as const;
 
+const LIST_ITEM_METRICS_SELECT = {
+  requestedQuantity: true,
+  unitPrice: true,
+} as const;
+
 /** Fields selected for an item row. */
 const ITEM_SELECT = {
   id: true,
@@ -46,10 +67,24 @@ const ITEM_SELECT = {
   unitPrice: true,
 } as const;
 
-/** Request select with items embedded. */
+const REQUEST_LIST_SELECT = {
+  ...REQUEST_SELECT,
+  supplier: { select: SUPPLIER_SUMMARY_SELECT },
+  requestedByUser: { select: USER_SUMMARY_SELECT },
+  items: { select: LIST_ITEM_METRICS_SELECT },
+} as const;
+
+/** Request select with detail relations embedded. */
 const REQUEST_WITH_ITEMS_SELECT = {
   ...REQUEST_SELECT,
-  items: { select: ITEM_SELECT },
+  supplier: { select: SUPPLIER_SUMMARY_SELECT },
+  requestedByUser: { select: USER_SUMMARY_SELECT },
+  items: {
+    select: {
+      ...ITEM_SELECT,
+      product: { select: PRODUCT_SUMMARY_SELECT },
+    },
+  },
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -57,7 +92,25 @@ const REQUEST_WITH_ITEMS_SELECT = {
 // ---------------------------------------------------------------------------
 
 /** Raw row from REQUEST_SELECT (dates as Date, unitPrice as Prisma.Decimal). */
-export type ReplenishmentRequestRow = {
+type DecimalLike = { toNumber(): number };
+
+export type ReplenishmentSupplierSummaryRow = {
+  id: string;
+  name: string;
+};
+
+export type ReplenishmentUserSummaryRow = {
+  id: string;
+  fullName: string;
+};
+
+export type ReplenishmentProductSummaryRow = {
+  id: string;
+  name: string;
+  code: string;
+};
+
+type ReplenishmentRequestBaseRow = {
   id: string;
   supplierId: string;
   requestedByUserId: string;
@@ -69,6 +122,15 @@ export type ReplenishmentRequestRow = {
   cancelledAt: Date | null;
   cancelledByUserId: string | null;
   notes: string | null;
+  supplier: ReplenishmentSupplierSummaryRow;
+  requestedByUser: ReplenishmentUserSummaryRow;
+};
+
+export type ReplenishmentRequestRow = ReplenishmentRequestBaseRow & {
+  items: Array<{
+    requestedQuantity: number;
+    unitPrice: DecimalLike;
+  }>;
 };
 
 export type ReplenishmentRequestItemRow = {
@@ -76,10 +138,11 @@ export type ReplenishmentRequestItemRow = {
   productId: string;
   requestedQuantity: number;
   receivedQuantity: number | null;
-  unitPrice: { toNumber(): number };
+  unitPrice: DecimalLike;
+  product: ReplenishmentProductSummaryRow;
 };
 
-export type ReplenishmentRequestWithItemsRow = ReplenishmentRequestRow & {
+export type ReplenishmentRequestWithItemsRow = ReplenishmentRequestBaseRow & {
   items: ReplenishmentRequestItemRow[];
 };
 
@@ -156,7 +219,7 @@ export class ReplenishmentRequestsRepository {
 
     return prisma.replenishmentRequest.findUnique({
       where: { id },
-      select: REQUEST_SELECT,
+      select: REQUEST_LIST_SELECT,
     }) as Promise<ReplenishmentRequestRow | null>;
   }
 
@@ -196,7 +259,7 @@ export class ReplenishmentRequestsRepository {
     const [rows, total] = await Promise.all([
       prisma.replenishmentRequest.findMany({
         where,
-        select: REQUEST_SELECT,
+        select: REQUEST_LIST_SELECT,
         orderBy: { requestedAt: 'desc' },
         skip,
         take: pageSize,
@@ -225,7 +288,7 @@ export class ReplenishmentRequestsRepository {
     const [rows, total] = await Promise.all([
       prisma.replenishmentRequest.findMany({
         where,
-        select: REQUEST_SELECT,
+        select: REQUEST_LIST_SELECT,
         orderBy: { requestedAt: 'desc' },
         skip,
         take: pageSize,
