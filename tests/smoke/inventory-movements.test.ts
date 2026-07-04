@@ -29,6 +29,15 @@ interface MovementRecord {
   id: string;
   productId: string;
   userId: string;
+  product: {
+    id: string;
+    name: string;
+    code: string;
+  };
+  user: {
+    id: string;
+    fullName: string;
+  };
   type: 'IN' | 'OUT' | 'ADJUSTMENT';
   adjustmentDirection: 'INCREASE' | 'DECREASE' | null;
   quantity: number;
@@ -76,8 +85,16 @@ const MISSING_MOV_ID = 'clh3xxk0h2099356c9a5zzzzz';
 
 interface MockProduct {
   id: string;
+  code: string;
+  name: string;
   stock: number;
+  minStock: number;
   active: boolean;
+}
+
+interface MockUser {
+  id: string;
+  fullName: string;
 }
 
 interface MockMovement {
@@ -94,15 +111,52 @@ interface MockMovement {
 
 let productStore: Map<string, MockProduct>;
 let movementStore: Map<string, MockMovement>;
+let userStore: Map<string, MockUser>;
 let movementCounter: number;
 
 function seedStore(): void {
   movementCounter = 0;
 
   productStore = new Map([
-    [PROD1_ID, { id: PROD1_ID, stock: 20, active: true }],
-    [PROD2_ID, { id: PROD2_ID, stock: 2, active: true }],
-    [PROD3_ID, { id: PROD3_ID, stock: 99, active: false }],
+    [
+      PROD1_ID,
+      {
+        id: PROD1_ID,
+        code: 'MED-001',
+        name: 'Ibuprofen 400mg',
+        stock: 20,
+        minStock: 5,
+        active: true,
+      },
+    ],
+    [
+      PROD2_ID,
+      {
+        id: PROD2_ID,
+        code: 'MED-002',
+        name: 'Paracetamol 500mg',
+        stock: 2,
+        minStock: 3,
+        active: true,
+      },
+    ],
+    [
+      PROD3_ID,
+      {
+        id: PROD3_ID,
+        code: 'MED-003',
+        name: 'Amoxicillin 500mg',
+        stock: 99,
+        minStock: 10,
+        active: false,
+      },
+    ],
+  ]);
+
+  userStore = new Map([
+    [ADMIN_ID, { id: ADMIN_ID, fullName: 'Admin User' }],
+    [MANAGER_ID, { id: MANAGER_ID, fullName: 'Manager User' }],
+    [OPERATOR_ID, { id: OPERATOR_ID, fullName: 'Operator User' }],
   ]);
 
   movementStore = new Map([
@@ -135,6 +189,36 @@ function seedStore(): void {
       },
     ],
   ]);
+}
+
+function buildMovementRow(movement: MockMovement) {
+  const product = productStore.get(movement.productId);
+  const user = userStore.get(movement.userId);
+
+  if (!product || !user) {
+    throw new Error(`Missing related data for movement ${movement.id}`);
+  }
+
+  return {
+    id: movement.id,
+    productId: movement.productId,
+    userId: movement.userId,
+    product: {
+      id: product.id,
+      name: product.name,
+      code: product.code,
+    },
+    user: {
+      id: user.id,
+      fullName: user.fullName,
+    },
+    type: movement.type,
+    adjustmentDirection: movement.adjustmentDirection,
+    quantity: movement.quantity,
+    resultingStock: movement.resultingStock,
+    reason: movement.reason,
+    createdAt: movement.createdAt,
+  };
 }
 
 // ── Prisma mock ───────────────────────────────────────────────────────────────
@@ -223,15 +307,19 @@ describe('Inventory Movements smoke tests', () => {
     // eslint-disable-next-line @typescript-eslint/unbound-method, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
     const mockTxMovementCreate = vi.mocked(mockTx.inventoryMovement.create);
 
-    // product.findUnique — used by findProductActive() (reads product.id + stock + active).
-    // Selects { id, stock, active } via the select argument.
+    // product.findUnique — used by findProductActive() (reads product.id + stock + minStock + active).
     // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     mockProductFindUnique.mockImplementation(
       ({ where }: { where: { id?: string }; select?: Record<string, boolean> }) => {
         if (!where.id) return Promise.resolve(null);
         const product = productStore.get(where.id);
         if (!product) return Promise.resolve(null);
-        return Promise.resolve({ id: product.id, stock: product.stock, active: product.active });
+        return Promise.resolve({
+          id: product.id,
+          stock: product.stock,
+          minStock: product.minStock,
+          active: product.active,
+        });
       },
     );
 
@@ -240,7 +328,7 @@ describe('Inventory Movements smoke tests', () => {
     mockMovementFindUnique.mockImplementation(({ where }: { where: { id?: string } }) => {
       if (!where.id) return Promise.resolve(null);
       const movement = movementStore.get(where.id);
-      return Promise.resolve(movement ?? null);
+      return Promise.resolve(movement ? buildMovementRow(movement) : null);
     });
 
     // inventoryMovement.findMany — used by listMovements() and listMovementsByProduct().
@@ -278,7 +366,9 @@ describe('Inventory Movements smoke tests', () => {
 
         // Sort createdAt DESC.
         rows = rows.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-        return Promise.resolve(rows.slice(skip, take !== undefined ? skip + take : undefined));
+        return Promise.resolve(
+          rows.slice(skip, take !== undefined ? skip + take : undefined).map(buildMovementRow),
+        );
       },
     );
 
@@ -344,7 +434,7 @@ describe('Inventory Movements smoke tests', () => {
           createdAt: new Date(),
         };
         movementStore.set(movement.id, movement);
-        return Promise.resolve(movement);
+        return Promise.resolve(buildMovementRow(movement));
       },
     );
 
@@ -380,6 +470,12 @@ describe('Inventory Movements smoke tests', () => {
       expect(res.status).toBe(201);
       const body = res.body as MovementBody;
       expect(body.movement.type).toBe('IN');
+      expect(body.movement.product).toEqual({
+        id: PROD1_ID,
+        name: 'Ibuprofen 400mg',
+        code: 'MED-001',
+      });
+      expect(body.movement.user).toEqual({ id: ADMIN_ID, fullName: 'Admin User' });
       expect(body.movement.quantity).toBe(10);
       expect(body.movement.resultingStock).toBe(30);
       expect(body.movement.adjustmentDirection).toBeNull();
@@ -397,6 +493,7 @@ describe('Inventory Movements smoke tests', () => {
       expect(res.status).toBe(201);
       const body = res.body as MovementBody;
       expect(body.movement.type).toBe('OUT');
+      expect(body.movement.user).toEqual({ id: OPERATOR_ID, fullName: 'Operator User' });
       expect(body.movement.resultingStock).toBe(15);
       expect(productStore.get(PROD1_ID)?.stock).toBe(15);
     });
@@ -652,6 +749,18 @@ describe('Inventory Movements smoke tests', () => {
       expect(body.meta.page).toBe(1);
       expect(typeof body.meta.total).toBe('number');
       expect(typeof body.meta.totalPages).toBe('number');
+      /* eslint-disable @typescript-eslint/no-unsafe-assignment */
+      expect(body.data[0]).toEqual(
+        expect.objectContaining({
+          product: expect.objectContaining({
+            id: expect.any(String),
+            name: expect.any(String),
+            code: expect.any(String),
+          }),
+          user: expect.objectContaining({ id: expect.any(String), fullName: expect.any(String) }),
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-unsafe-assignment */
 
       // Sorted newest first: MOV2 (Jan 2) before MOV1 (Jan 1).
       if (body.data.length >= 2) {
@@ -813,6 +922,12 @@ describe('Inventory Movements smoke tests', () => {
       expect(res.status).toBe(200);
       const body = res.body as MovementBody;
       expect(body.movement.id).toBe(MOV1_ID);
+      expect(body.movement.product).toEqual({
+        id: PROD1_ID,
+        name: 'Ibuprofen 400mg',
+        code: 'MED-001',
+      });
+      expect(body.movement.user).toEqual({ id: ADMIN_ID, fullName: 'Admin User' });
       expect(body.movement.type).toBe('IN');
       expect(typeof body.movement.resultingStock).toBe('number');
       expect(body.movement.adjustmentDirection).toBeNull();

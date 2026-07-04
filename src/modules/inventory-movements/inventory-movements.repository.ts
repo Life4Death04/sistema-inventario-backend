@@ -24,7 +24,6 @@ import type {
   ListMovementsQuery,
   ListMovementsByProductQuery,
 } from './inventory-movements.schema.js';
-import type { MovementDto } from './inventory-movements.schema.js';
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -49,6 +48,42 @@ export type InsertMovementData = {
   reason: string;
 };
 
+export type MovementProductSummaryRow = {
+  id: string;
+  name: string;
+  code: string;
+};
+
+export type MovementUserSummaryRow = {
+  id: string;
+  fullName: string;
+};
+
+export type MovementRow = {
+  id: string;
+  productId: string;
+  userId: string;
+  product: MovementProductSummaryRow;
+  user: MovementUserSummaryRow;
+  type: MovementType;
+  adjustmentDirection: AdjustmentDirection | null;
+  quantity: number;
+  resultingStock: number;
+  reason: string;
+  createdAt: Date;
+};
+
+const PRODUCT_SUMMARY_SELECT = {
+  id: true,
+  name: true,
+  code: true,
+} as const;
+
+const USER_SUMMARY_SELECT = {
+  id: true,
+  fullName: true,
+} as const;
+
 /** Fields selected for movement responses. */
 const MOVEMENT_SELECT = {
   id: true,
@@ -60,6 +95,8 @@ const MOVEMENT_SELECT = {
   resultingStock: true,
   reason: true,
   createdAt: true,
+  product: { select: PRODUCT_SUMMARY_SELECT },
+  user: { select: USER_SUMMARY_SELECT },
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -125,7 +162,7 @@ export class InventoryMovementsRepository {
   async insertMovement(
     tx: Prisma.TransactionClient,
     data: InsertMovementData,
-  ): Promise<MovementDto> {
+  ): Promise<MovementRow> {
     return tx.inventoryMovement.create({
       data: {
         productId: data.productId,
@@ -137,7 +174,7 @@ export class InventoryMovementsRepository {
         reason: data.reason,
       },
       select: MOVEMENT_SELECT,
-    }) as Promise<MovementDto>;
+    }) as Promise<MovementRow>;
   }
 
   // ── Point read ─────────────────────────────────────────────────────────────
@@ -146,11 +183,11 @@ export class InventoryMovementsRepository {
    * Find a single movement by primary key.
    * Returns null when not found.
    */
-  async findMovementById(id: string): Promise<MovementDto | null> {
+  async findMovementById(id: string): Promise<MovementRow | null> {
     return prisma.inventoryMovement.findUnique({
       where: { id },
       select: MOVEMENT_SELECT,
-    }) as Promise<MovementDto | null>;
+    }) as Promise<MovementRow | null>;
   }
 
   // ── Global list ────────────────────────────────────────────────────────────
@@ -169,7 +206,7 @@ export class InventoryMovementsRepository {
    *
    * Returns [rows, total] tuple so the service can build the paginated envelope.
    */
-  async listMovements(query: ListMovementsQuery): Promise<[MovementDto[], number]> {
+  async listMovements(query: ListMovementsQuery): Promise<[MovementRow[], number]> {
     const { page, limit, productId, type, from, to } = query;
     const skip = (page - 1) * limit;
 
@@ -195,7 +232,7 @@ export class InventoryMovementsRepository {
       prisma.inventoryMovement.count({ where }),
     ]);
 
-    return [rows as MovementDto[], total];
+    return [rows as MovementRow[], total];
   }
 
   // ── Product-scoped list ────────────────────────────────────────────────────
@@ -213,7 +250,7 @@ export class InventoryMovementsRepository {
   async listMovementsByProduct(
     productId: string,
     query: ListMovementsByProductQuery,
-  ): Promise<[MovementDto[], number]> {
+  ): Promise<[MovementRow[], number]> {
     const { page, limit, type, from, to } = query;
     const skip = (page - 1) * limit;
 
@@ -238,7 +275,7 @@ export class InventoryMovementsRepository {
       prisma.inventoryMovement.count({ where }),
     ]);
 
-    return [rows as MovementDto[], total];
+    return [rows as MovementRow[], total];
   }
 }
 
