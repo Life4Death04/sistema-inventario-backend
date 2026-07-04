@@ -8,7 +8,7 @@
  *   - listSuppliersQuerySchema  query for GET /api/suppliers (extends paginationQuerySchema)
  */
 import { z } from 'zod';
-import { paginationQuerySchema } from '../../shared/pagination/index.js';
+import { paginationQuerySchema, type PaginatedResponse } from '../../shared/pagination/index.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -133,3 +133,24 @@ export type CreateSupplierDto = z.infer<typeof createSupplierSchema>;
 export type UpdateSupplierDto = z.infer<typeof updateSupplierSchema>;
 export type SupplierIdParams = z.infer<typeof supplierIdParamsSchema>;
 export type ListSuppliersQuery = z.infer<typeof listSuppliersQuerySchema>;
+
+export interface SupplierProductSummaryDto {
+  id: string;
+  name: string;
+  code: string;
+}
+
+export interface SupplierDto {
+  id: string;
+  name: string;
+  rif: string | null;
+  whatsapp: string | null;
+  address: string | null;
+  active: boolean;
+  products: SupplierProductSummaryDto[];
+  productsCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type PaginatedSuppliersResponse = PaginatedResponse<SupplierDto>;

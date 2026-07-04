@@ -23,6 +23,12 @@ import type {
 // ---------------------------------------------------------------------------
 
 /** Shape returned by all repository methods. */
+export type SupplierProductSummaryRow = {
+  id: string;
+  name: string;
+  code: string;
+};
+
 export type SupplierRecord = {
   id: string;
   name: string;
@@ -30,9 +36,16 @@ export type SupplierRecord = {
   whatsapp: string | null;
   address: string | null;
   active: boolean;
+  products: Array<{ product: SupplierProductSummaryRow }>;
   createdAt: Date;
   updatedAt: Date;
 };
+
+const PRODUCT_SUMMARY_SELECT = {
+  id: true,
+  name: true,
+  code: true,
+} as const;
 
 /** Fields selected on every supplier query. */
 const SUPPLIER_SELECT = {
@@ -42,6 +55,11 @@ const SUPPLIER_SELECT = {
   whatsapp: true,
   address: true,
   active: true,
+  products: {
+    select: {
+      product: { select: PRODUCT_SUMMARY_SELECT },
+    },
+  },
   createdAt: true,
   updatedAt: true,
 } as const;
