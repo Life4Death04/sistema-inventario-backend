@@ -34,6 +34,7 @@ import type { MovementDto } from './inventory-movements.schema.js';
 export type ActiveProductRecord = {
   id: string;
   stock: number;
+  minStock: number;
   active: boolean;
 };
 
@@ -76,7 +77,7 @@ export class InventoryMovementsRepository {
   async findProductActive(productId: string): Promise<ActiveProductRecord | null> {
     return prisma.product.findUnique({
       where: { id: productId },
-      select: { id: true, stock: true, active: true },
+      select: { id: true, stock: true, minStock: true, active: true },
     });
   }
 
