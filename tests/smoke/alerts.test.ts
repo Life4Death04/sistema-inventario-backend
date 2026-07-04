@@ -85,9 +85,21 @@ interface MockAlert {
 
 interface MockProduct {
   id: string;
+  code: string;
+  name: string;
   stock: number;
   minStock: number;
   active: boolean;
+}
+
+interface MockUser {
+  id: string;
+  fullName: string;
+}
+
+interface MockSupplier {
+  id: string;
+  name: string;
 }
 
 interface MockProductSupplier {
@@ -99,6 +111,8 @@ interface MockProductSupplier {
 let alertStore: Map<string, MockAlert>;
 let productStore: Map<string, MockProduct>;
 let productSupplierStore: Map<string, MockProductSupplier>;
+let userStore: Map<string, MockUser>;
+let supplierStore: Map<string, MockSupplier>;
 let replenishmentRequestCounter: number;
 
 function seedStores(): void {
@@ -147,9 +161,37 @@ function seedStores(): void {
   ]);
 
   productStore = new Map([
-    [PROD1_ID, { id: PROD1_ID, stock: 2, minStock: 10, active: true }],
-    [PROD2_ID, { id: PROD2_ID, stock: 0, minStock: 5, active: true }],
+    [
+      PROD1_ID,
+      {
+        id: PROD1_ID,
+        code: 'MED-001',
+        name: 'Ibuprofen 400mg',
+        stock: 2,
+        minStock: 10,
+        active: true,
+      },
+    ],
+    [
+      PROD2_ID,
+      {
+        id: PROD2_ID,
+        code: 'MED-002',
+        name: 'Paracetamol 500mg',
+        stock: 0,
+        minStock: 5,
+        active: true,
+      },
+    ],
   ]);
+
+  userStore = new Map([
+    [ADMIN_ID, { id: ADMIN_ID, fullName: 'Admin User' }],
+    [MANAGER_ID, { id: MANAGER_ID, fullName: 'Manager User' }],
+    [OPERATOR_ID, { id: OPERATOR_ID, fullName: 'Operator User' }],
+  ]);
+
+  supplierStore = new Map([[SUPPLIER1_ID, { id: SUPPLIER1_ID, name: 'SupplierOne SA' }]]);
 
   productSupplierStore = new Map([
     [
@@ -157,6 +199,64 @@ function seedStores(): void {
       { productId: PROD1_ID, supplierId: SUPPLIER1_ID, referencePrice: { toNumber: () => 8.0 } },
     ],
   ]);
+}
+
+function buildCreatedReplenishmentRow(data: {
+  id: string;
+  supplierId: string;
+  requestedByUserId: string;
+  notes: string | null;
+  items: Array<{ productId: string; requestedQuantity: number; unitPrice: number }>;
+}) {
+  const supplier = supplierStore.get(data.supplierId);
+  const requestedByUser = userStore.get(data.requestedByUserId);
+
+  if (!supplier || !requestedByUser) {
+    throw new Error(`Missing related data for replenishment request ${data.id}`);
+  }
+
+  return {
+    id: data.id,
+    supplierId: data.supplierId,
+    requestedByUserId: data.requestedByUserId,
+    supplier: {
+      id: supplier.id,
+      name: supplier.name,
+    },
+    requestedByUser: {
+      id: requestedByUser.id,
+      fullName: requestedByUser.fullName,
+    },
+    status: 'PENDING',
+    requestedAt: new Date(),
+    sentAt: null,
+    receivedAt: null,
+    receivedByUserId: null,
+    cancelledAt: null,
+    cancelledByUserId: null,
+    notes: data.notes,
+    items: data.items.map((item, index) => {
+      const product = productStore.get(item.productId);
+
+      if (!product) {
+        throw new Error(`Missing product ${item.productId} for replenishment request ${data.id}`);
+      }
+
+      return {
+        id: `clh3xxk0hii0${index + 1}356c9a5newii`,
+        replenishmentRequestId: data.id,
+        productId: item.productId,
+        requestedQuantity: item.requestedQuantity,
+        receivedQuantity: null,
+        unitPrice: { toNumber: () => Number(item.unitPrice) },
+        product: {
+          id: product.id,
+          name: product.name,
+          code: product.code,
+        },
+      };
+    }),
+  };
 }
 
 // ── Prisma mock ───────────────────────────────────────────────────────────────
@@ -318,7 +418,17 @@ describe('Alerts smoke tests', () => {
         // If product is selected (create-replenishment lookup), embed product data.
         if (select && 'product' in select) {
           const product = productStore.get(row.productId);
-          return Promise.resolve({ ...row, product: product ?? null });
+          return Promise.resolve({
+            ...row,
+            product: product
+              ? {
+                  id: product.id,
+                  stock: product.stock,
+                  minStock: product.minStock,
+                  active: product.active,
+                }
+              : null,
+          });
         }
         return Promise.resolve({ ...row });
       },
@@ -352,30 +462,18 @@ describe('Alerts smoke tests', () => {
           requestedQuantity: number;
           unitPrice: number;
         }>;
-        return Promise.resolve({
-          id: newId,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          supplierId: data.supplierId as string,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          requestedByUserId: data.requestedByUserId as string,
-          status: 'PENDING',
-          requestedAt: new Date(),
-          sentAt: null,
-          receivedAt: null,
-          receivedByUserId: null,
-          cancelledAt: null,
-          cancelledByUserId: null,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          notes: (data.notes as string | null | undefined) ?? null,
-          items: itemsData.map((item, i) => ({
-            id: `clh3xxk0hii0${i + 1}356c9a5newii`,
-            replenishmentRequestId: newId,
-            productId: item.productId,
-            requestedQuantity: item.requestedQuantity,
-            receivedQuantity: null,
-            unitPrice: { toNumber: () => Number(item.unitPrice) },
-          })),
-        });
+        return Promise.resolve(
+          buildCreatedReplenishmentRow({
+            id: newId,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            supplierId: data.supplierId as string,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            requestedByUserId: data.requestedByUserId as string,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            notes: (data.notes as string | null | undefined) ?? null,
+            items: itemsData,
+          }),
+        );
       },
     );
 
