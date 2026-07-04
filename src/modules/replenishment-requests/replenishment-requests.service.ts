@@ -24,6 +24,7 @@ import { AppError } from '../../shared/errors/AppError.js';
 import { ERROR_CODES } from '../../shared/errors/errorCodes.js';
 import { prisma } from '../../shared/utils/prisma.js';
 import logger from '../../shared/logger/index.js';
+import { alertsRepository } from '../alerts/alerts.repository.js';
 import {
   notificationService,
   normalizeE164,
@@ -399,7 +400,7 @@ export class ReplenishmentRequestsService {
         // Post IN movement: read current stock, attempt CAS, insert movement.
         const product = await tx.product.findUnique({
           where: { id: item.productId },
-          select: { id: true, stock: true, active: true },
+          select: { id: true, stock: true, minStock: true, active: true },
         });
 
         if (!product) {
@@ -443,6 +444,17 @@ export class ReplenishmentRequestsService {
           resultingStock: nextStock,
           reason: `Received from replenishment request #${id}`,
         });
+
+        // Advisory alert reconcile per item (REQ-RR-hook, REQ-5).
+        // Failures are logged and swallowed — they must NOT roll back the stock update.
+        try {
+          await alertsRepository.reconcile(tx, item.productId, nextStock, product.minStock);
+        } catch (reconcileErr: unknown) {
+          logger.error(
+            { err: reconcileErr, productId: item.productId, nextStock },
+            '[alerts.reconcile] Non-critical reconcile failure inside receive() tx — swallowed.',
+          );
+        }
       }
 
       // 3. Return updated request with items for DTO mapping.

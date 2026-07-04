@@ -27,7 +27,9 @@ import { prisma } from '../../shared/utils/prisma.js';
 import { AppError } from '../../shared/errors/AppError.js';
 import { ERROR_CODES } from '../../shared/errors/errorCodes.js';
 import { paginate, type PaginatedResponse } from '../../shared/pagination/index.js';
+import logger from '../../shared/logger/index.js';
 import { inventoryMovementsRepository } from './inventory-movements.repository.js';
+import { alertsRepository } from '../alerts/alerts.repository.js';
 import type {
   CreateMovementDto,
   MovementDto,
@@ -171,7 +173,7 @@ export class InventoryMovementsService {
           }
 
           // Step d: Append the movement record atomically.
-          return inventoryMovementsRepository.insertMovement(tx, {
+          const movement = await inventoryMovementsRepository.insertMovement(tx, {
             productId: dto.productId,
             userId: actorId,
             type: dto.type as MovementType,
@@ -180,6 +182,19 @@ export class InventoryMovementsService {
             resultingStock: nextStock,
             reason: dto.reason,
           });
+
+          // Step e: Advisory alert reconcile (REQ-IM-hook, REQ-5).
+          // Failures are logged and swallowed — they must NOT roll back the movement.
+          try {
+            await alertsRepository.reconcile(tx, dto.productId, nextStock, product.minStock);
+          } catch (reconcileErr: unknown) {
+            logger.error(
+              { err: reconcileErr, productId: dto.productId, nextStock },
+              '[alerts.reconcile] Non-critical reconcile failure inside createMovement tx — swallowed.',
+            );
+          }
+
+          return movement;
         });
 
         return movement;

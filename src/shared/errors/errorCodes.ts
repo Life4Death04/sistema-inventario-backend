@@ -140,6 +140,15 @@ export const ERROR_CODES = {
    * The receive body references an item id not belonging to the request. 400.
    */
   REPLENISHMENT_ITEM_NOT_FOUND: 'REPLENISHMENT_ITEM_NOT_FOUND',
+
+  // ---------------------------------------------------------------------------
+  // Alerts
+  // ---------------------------------------------------------------------------
+
+  /**
+   * No alert with the given id exists. 404.
+   */
+  ALERT_NOT_FOUND: 'ALERT_NOT_FOUND',
 } as const;
 
 /** Union type of all valid error codes. */
