@@ -509,6 +509,35 @@ export class ReplenishmentRequestsService {
       return replenishmentRequestsRepository.findById(id, { includeItems: true });
     });
 
+    // Post-commit safety net: re-reconcile alerts for each received product using
+    // the committed stock values. This guarantees alert resolution even when the
+    // in-transaction reconcile above fails silently (e.g. connection pool routing
+    // or isolation edge cases in hosted PostgreSQL).
+    // Each reconcile runs in its own mini-transaction to avoid coupling failures.
+    for (const item of withItems.items) {
+      try {
+        const freshProduct = await prisma.product.findUnique({
+          where: { id: item.productId },
+          select: { stock: true, minStock: true },
+        });
+        if (freshProduct) {
+          await prisma.$transaction(async (reconcileTx) => {
+            await alertsRepository.reconcile(
+              reconcileTx,
+              item.productId,
+              freshProduct.stock,
+              freshProduct.minStock,
+            );
+          });
+        }
+      } catch (postCommitErr: unknown) {
+        logger.error(
+          { err: postCommitErr, productId: item.productId },
+          '[alerts.reconcile] Post-commit safety-net reconcile failed — swallowed.',
+        );
+      }
+    }
+
     return toWithItemsDto(result as ReplenishmentRequestWithItemsRow);
   }
 
