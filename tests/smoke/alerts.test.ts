@@ -715,12 +715,9 @@ describe('Alerts smoke tests', () => {
         .set('Authorization', `Bearer ${ADMIN_TOKEN()}`)
         .send({ supplierId: SUPPLIER1_ID });
 
-      // PROD2 has no referencePrice for SUPPLIER1 → UNIT_PRICE_REQUIRED (downstream surfaced verbatim)
-      // This also proves the alert was found and quantity was computed before hitting the unit price gate.
-      expect([400, 201]).toContain(res.status);
-      if (res.status === 400) {
-        expect((res.body as ErrorBody).error).toBe('UNIT_PRICE_REQUIRED');
-      }
+      // PROD2 has no referencePrice for SUPPLIER1 — price is now optional, stored as null → always 201
+      // This proves the alert was found and quantity was computed correctly.
+      expect(res.status).toBe(201);
     });
 
     // Resolved alert: still works (REQ-8 — no state gate)

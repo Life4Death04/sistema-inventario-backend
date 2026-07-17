@@ -60,7 +60,7 @@ export type ProductDetailRecord = {
   category: { id: string; name: string; description: string | null } | null;
   stock: number;
   minStock: number;
-  price: string;
+  price: string | null;
   active: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -81,7 +81,7 @@ export type ProductListRecord = {
   categoryId: string;
   stock: number;
   minStock: number;
-  price: string;
+  price: string | null;
   active: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -96,7 +96,7 @@ type ProductSupplierRawEntry = {
 
 type ProductDetailRaw = Omit<ProductDetailRecord, 'unitContent' | 'price' | 'suppliers'> & {
   unitContent: DecimalLike;
-  price: DecimalLike;
+  price: DecimalLike | null;
   suppliers: ProductSupplierRawEntry[];
 };
 
@@ -158,7 +158,7 @@ export class ProductsRepository {
         categoryId: data.categoryId,
         stock: data.stock ?? 0,
         minStock: data.minStock ?? 0,
-        price: data.price,
+        price: data.price ?? null,
       },
       select: PRODUCT_LIST_SELECT,
     }) as unknown as Promise<ProductListRecord>;
@@ -394,7 +394,7 @@ export class ProductsRepository {
     return {
       ...raw,
       unitContent: raw.unitContent.toString(),
-      price: raw.price.toString(),
+      price: raw.price != null ? raw.price.toString() : null,
       suppliers: raw.suppliers.map((s) => ({
         supplier: s.supplier,
         referencePrice: s.referencePrice != null ? s.referencePrice.toString() : null,

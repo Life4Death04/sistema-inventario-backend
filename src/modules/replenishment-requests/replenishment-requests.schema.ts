@@ -165,7 +165,7 @@ export interface ReplenishmentRequestItemDto {
   product: ReplenishmentProductSummaryDto;
   requestedQuantity: number;
   receivedQuantity: number | null;
-  unitPrice: number;
+  unitPrice: number | null;
 }
 
 /** DTO with embedded items (used by getById). */

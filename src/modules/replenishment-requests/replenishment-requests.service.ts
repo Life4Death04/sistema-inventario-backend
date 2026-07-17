@@ -13,7 +13,7 @@
  * unitPrice resolution (spec §Create Request):
  *   1. Use the unitPrice provided in the request body item.
  *   2. If absent, look up ProductSupplier.referencePrice(supplierId, productId).
- *   3. If neither exists → 400 UNIT_PRICE_REQUIRED; nothing is persisted.
+ *   3. If neither exists → unitPrice is stored as null (price is optional).
  *
  * Twilio timing: fire-and-forget AFTER commit (.catch(logger.error)).
  *   DB truth > delivery guarantee (design §Architecture Decisions).
@@ -82,7 +82,7 @@ function toDecimalString(
 function calculateRequestMetrics(
   items: Array<{
     requestedQuantity: number;
-    unitPrice: Prisma.Decimal | { toNumber(): number } | { toString(): string };
+    unitPrice: Prisma.Decimal | { toNumber(): number } | { toString(): string } | null;
   }>,
 ): {
   itemsCount: number;
@@ -90,7 +90,11 @@ function calculateRequestMetrics(
 } {
   const estimatedTotal = items.reduce(
     (total, item) =>
-      total.plus(new Prisma.Decimal(toDecimalString(item.unitPrice)).mul(item.requestedQuantity)),
+      item.unitPrice != null
+        ? total.plus(
+            new Prisma.Decimal(toDecimalString(item.unitPrice)).mul(item.requestedQuantity),
+          )
+        : total,
     new Prisma.Decimal(0),
   );
 
@@ -134,7 +138,7 @@ function toItemDto(item: ReplenishmentRequestItemRow): ReplenishmentRequestItemD
     product: toProductSummaryDto(item.product),
     requestedQuantity: item.requestedQuantity,
     receivedQuantity: item.receivedQuantity,
-    unitPrice: item.unitPrice.toNumber(),
+    unitPrice: item.unitPrice != null ? item.unitPrice.toNumber() : null,
   };
 }
 
@@ -173,7 +177,7 @@ export class ReplenishmentRequestsService {
    * For each item:
    *   1. Use body.unitPrice when provided.
    *   2. Else look up ProductSupplier.referencePrice.
-   *   3. Else throw 400 UNIT_PRICE_REQUIRED (nothing persisted).
+   *   3. If neither exists → unitPrice is stored as null (price is optional).
    *
    * @param body     Validated request body.
    * @param actorId  Authenticated user id.
@@ -186,11 +190,11 @@ export class ReplenishmentRequestsService {
     const resolvedItems: Array<{
       productId: string;
       requestedQuantity: number;
-      unitPrice: number;
+      unitPrice: number | null;
     }> = [];
 
     for (const item of body.items) {
-      let unitPrice: number;
+      let unitPrice: number | null;
 
       if (item.unitPrice !== undefined) {
         unitPrice = item.unitPrice;
@@ -199,16 +203,7 @@ export class ReplenishmentRequestsService {
           body.supplierId,
           item.productId,
         );
-
-        if (referencePrice === null) {
-          throw new AppError(
-            ERROR_CODES.UNIT_PRICE_REQUIRED,
-            400,
-            `No unitPrice provided and no referencePrice found for product ${item.productId} with supplier ${body.supplierId}.`,
-          );
-        }
-
-        unitPrice = referencePrice;
+        unitPrice = referencePrice; // null when no referencePrice — allowed, price is optional
       }
 
       resolvedItems.push({
