@@ -19,7 +19,7 @@ export interface TemplateRequest {
   items: Array<{
     productName?: string;
     requestedQuantity: number;
-    unitPrice: number | { toNumber(): number };
+    unitPrice: number | { toNumber(): number } | null;
   }>;
 }
 
@@ -55,13 +55,17 @@ function formatCurrency(amount: number): string {
 export function buildSentTemplate(request: TemplateRequest, supplier: TemplateSupplier): string {
   const lines = request.items
     .map((item) => {
-      const price = toNumber(item.unitPrice);
       const label = item.productName ?? 'Item';
+      if (item.unitPrice == null) {
+        return `${label} x${item.requestedQuantity}`;
+      }
+      const price = toNumber(item.unitPrice);
       return `${label} x${item.requestedQuantity} @ $${formatCurrency(price)}`;
     })
     .join(', ');
 
   const total = request.items.reduce((sum, item) => {
+    if (item.unitPrice == null) return sum;
     return sum + toNumber(item.unitPrice) * item.requestedQuantity;
   }, 0);
 

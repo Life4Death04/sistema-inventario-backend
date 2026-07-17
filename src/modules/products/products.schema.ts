@@ -197,7 +197,7 @@ export const createProductSchema = z.object({
     .min(0, { message: 'minStock must be >= 0.' })
     .default(0),
 
-  price: priceSchema,
+  price: z.union([priceSchema, z.null()]).optional(),
 });
 
 /**
@@ -280,7 +280,7 @@ export const updateProductSchema = z
       .min(0, { message: 'minStock must be >= 0.' })
       .optional(),
 
-    price: priceSchema.optional(),
+    price: z.union([priceSchema, z.null()]).optional(),
 
     // stock is NOT allowed on PATCH — the service guard catches it, but we
     // also reject it at the schema level so the controller never sees it.

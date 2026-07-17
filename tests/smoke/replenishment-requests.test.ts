@@ -155,7 +155,7 @@ interface MockItem {
   productId: string;
   requestedQuantity: number;
   receivedQuantity: number | null;
-  unitPrice: { toNumber(): number };
+  unitPrice: { toNumber(): number } | null;
 }
 
 interface MockProductSupplier {
@@ -526,7 +526,7 @@ describe('Replenishment Requests smoke tests', () => {
         const itemsData = (data.items?.create ?? []) as Array<{
           productId: string;
           requestedQuantity: number;
-          unitPrice: number;
+          unitPrice: number | null;
         }>;
 
         const newItems: MockItem[] = itemsData.map((itemData) => {
@@ -538,7 +538,8 @@ describe('Replenishment Requests smoke tests', () => {
             productId: itemData.productId,
             requestedQuantity: itemData.requestedQuantity,
             receivedQuantity: null,
-            unitPrice: { toNumber: () => Number(itemData.unitPrice) },
+            unitPrice:
+              itemData.unitPrice != null ? { toNumber: () => Number(itemData.unitPrice) } : null,
           };
           itemStore.set(itemId, item);
           return item;
@@ -825,8 +826,8 @@ describe('Replenishment Requests smoke tests', () => {
       expect(body.request.items[0]!.unitPrice).toBe(8.0);
     });
 
-    it('(C3) Create without unitPrice and no referencePrice → 400 UNIT_PRICE_REQUIRED', async () => {
-      // SUPPLIER1 + PROD2 has no referencePrice
+    it('(C3) Create without unitPrice and no referencePrice → 201 with null unitPrice', async () => {
+      // SUPPLIER1 + PROD2 has no referencePrice — price is now optional, stored as null
       const res = await request(app)
         .post('/api/replenishment-requests')
         .set('Authorization', `Bearer ${MANAGER_TOKEN()}`)
@@ -835,8 +836,9 @@ describe('Replenishment Requests smoke tests', () => {
           items: [{ productId: PROD2_ID, requestedQuantity: 2 }], // no unitPrice, no referencePrice
         });
 
-      expect(res.status).toBe(400);
-      expect((res.body as ErrorBody).error).toBe('UNIT_PRICE_REQUIRED');
+      expect(res.status).toBe(201);
+      const body = res.body as CreateBody;
+      expect(body.request.items[0]!.unitPrice).toBeNull();
     });
 
     it('(C4) Create with empty items → 400 REPLENISHMENT_ITEMS_REQUIRED', async () => {
@@ -1312,14 +1314,14 @@ describe('Replenishment Requests smoke tests', () => {
       expect(product?.stock).toBe(27);
     });
 
-    it('(RV3) receivedQuantity > requestedQuantity → 400 PARTIAL_RECEIPT_INVALID', async () => {
+    it('(RV3) receivedQuantity > requestedQuantity → 200 allowed (Bug#2: no upper bound)', async () => {
+      // Receiving more than requested is valid (e.g. supplier sends extra stock).
       const res = await request(app)
         .post(`/api/replenishment-requests/${REQ2_ID}/receive`)
         .set('Authorization', `Bearer ${ADMIN_TOKEN()}`)
-        .send({ items: [{ id: ITEM2_ID, receivedQuantity: 999 }] }); // 999 > 20
+        .send({ items: [{ id: ITEM2_ID, receivedQuantity: 999 }] }); // 999 > 20, now allowed
 
-      expect(res.status).toBe(400);
-      expect((res.body as ErrorBody).error).toBe('PARTIAL_RECEIPT_INVALID');
+      expect(res.status).toBe(200);
     });
 
     it('(RV4) Unknown item id in body → 400 REPLENISHMENT_ITEM_NOT_FOUND', async () => {

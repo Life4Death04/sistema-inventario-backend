@@ -129,7 +129,7 @@ type ReplenishmentRequestBaseRow = {
 export type ReplenishmentRequestRow = ReplenishmentRequestBaseRow & {
   items: Array<{
     requestedQuantity: number;
-    unitPrice: DecimalLike;
+    unitPrice: DecimalLike | null;
   }>;
 };
 
@@ -138,7 +138,7 @@ export type ReplenishmentRequestItemRow = {
   productId: string;
   requestedQuantity: number;
   receivedQuantity: number | null;
-  unitPrice: DecimalLike;
+  unitPrice: DecimalLike | null;
   product: ReplenishmentProductSummaryRow;
 };
 
@@ -157,8 +157,8 @@ export type CreateRequestData = {
   items: Array<{
     productId: string;
     requestedQuantity: number;
-    /** Resolved unitPrice — must be provided (service resolves from body or referencePrice). */
-    unitPrice: number;
+    /** Resolved unitPrice — null when neither body nor referencePrice provides a value. */
+    unitPrice: number | null;
   }>;
 };
 
