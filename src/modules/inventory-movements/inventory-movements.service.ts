@@ -33,9 +33,12 @@ import { alertsRepository } from '../alerts/alerts.repository.js';
 import type {
   CreateMovementDto,
   MovementDto,
+  MovementProductSummaryDto,
+  MovementUserSummaryDto,
   ListMovementsQuery,
   ListMovementsByProductQuery,
 } from './inventory-movements.schema.js';
+import type { MovementRow } from './inventory-movements.repository.js';
 
 // ---------------------------------------------------------------------------
 // Internal sentinel — signals a lost CAS race so the outer loop can retry
@@ -80,6 +83,37 @@ function translateAdjustment(signedQty: number): {
   return signedQty > 0
     ? { adjustmentDirection: AdjustmentDirection.INCREASE, quantity: signedQty }
     : { adjustmentDirection: AdjustmentDirection.DECREASE, quantity: Math.abs(signedQty) };
+}
+
+function toProductSummaryDto(product: MovementRow['product']): MovementProductSummaryDto {
+  return {
+    id: product.id,
+    name: product.name,
+    code: product.code,
+  };
+}
+
+function toUserSummaryDto(user: MovementRow['user']): MovementUserSummaryDto {
+  return {
+    id: user.id,
+    fullName: user.fullName,
+  };
+}
+
+function toDto(row: MovementRow): MovementDto {
+  return {
+    id: row.id,
+    productId: row.productId,
+    userId: row.userId,
+    product: toProductSummaryDto(row.product),
+    user: toUserSummaryDto(row.user),
+    type: row.type,
+    adjustmentDirection: row.adjustmentDirection,
+    quantity: row.quantity,
+    resultingStock: row.resultingStock,
+    reason: row.reason,
+    createdAt: row.createdAt.toISOString(),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +163,7 @@ export class InventoryMovementsService {
     const MAX_ATTEMPTS = 2;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        const movement = await prisma.$transaction(async (tx) => {
+        const result = await prisma.$transaction(async (tx) => {
           // Step a: Read product — must exist and be active.
           const product = await inventoryMovementsRepository.findProductActive(dto.productId);
 
@@ -194,10 +228,10 @@ export class InventoryMovementsService {
             );
           }
 
-          return movement;
+          return toDto(movement);
         });
 
-        return movement;
+        return result;
       } catch (err) {
         // Re-throw everything that is NOT our retry sentinel.
         if (!(err instanceof ConcurrencyRetryError)) {
@@ -237,7 +271,7 @@ export class InventoryMovementsService {
     if (!movement) {
       throw new AppError(ERROR_CODES.MOVEMENT_NOT_FOUND, 404, `Movement not found: ${id}.`);
     }
-    return movement;
+    return toDto(movement);
   }
 
   // ── Global list ────────────────────────────────────────────────────────────
@@ -248,7 +282,7 @@ export class InventoryMovementsService {
    */
   async listMovements(query: ListMovementsQuery): Promise<PaginatedResponse<MovementDto>> {
     const [data, total] = await inventoryMovementsRepository.listMovements(query);
-    return paginate({ data, total, page: query.page, limit: query.limit });
+    return paginate({ data: data.map(toDto), total, page: query.page, limit: query.limit });
   }
 
   // ── Product-scoped list ────────────────────────────────────────────────────
@@ -274,7 +308,7 @@ export class InventoryMovementsService {
       productId,
       query,
     );
-    return paginate({ data, total, page: query.page, limit: query.limit });
+    return paginate({ data: data.map(toDto), total, page: query.page, limit: query.limit });
   }
 }
 

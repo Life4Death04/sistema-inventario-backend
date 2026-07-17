@@ -123,11 +123,29 @@ export type SupplierIdParams = z.infer<typeof supplierIdParamsSchema>;
 // Response DTO types
 // ---------------------------------------------------------------------------
 
+export interface ReplenishmentSupplierSummaryDto {
+  id: string;
+  name: string;
+}
+
+export interface ReplenishmentUserSummaryDto {
+  id: string;
+  fullName: string;
+}
+
+export interface ReplenishmentProductSummaryDto {
+  id: string;
+  name: string;
+  code: string;
+}
+
 /** Base DTO for a single replenishment request (without items). */
 export interface ReplenishmentRequestDto {
   id: string;
   supplierId: string;
   requestedByUserId: string;
+  supplier: ReplenishmentSupplierSummaryDto;
+  requestedByUser: ReplenishmentUserSummaryDto;
   status: ReplenishmentStatus;
   requestedAt: string;
   sentAt: string | null;
@@ -136,15 +154,18 @@ export interface ReplenishmentRequestDto {
   cancelledAt: string | null;
   cancelledByUserId: string | null;
   notes: string | null;
+  itemsCount: number;
+  estimatedTotal: string;
 }
 
 /** DTO for a single replenishment request item. */
 export interface ReplenishmentRequestItemDto {
   id: string;
   productId: string;
+  product: ReplenishmentProductSummaryDto;
   requestedQuantity: number;
   receivedQuantity: number | null;
-  unitPrice: number;
+  unitPrice: number | null;
 }
 
 /** DTO with embedded items (used by getById). */

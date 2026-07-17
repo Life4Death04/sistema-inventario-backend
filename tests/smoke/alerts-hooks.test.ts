@@ -66,9 +66,21 @@ const PROD_S5_ID = 'clh3xxk0hh005356c9a5obs5a'; // stock=0, minStock=5, open OUT
 
 interface MockProduct {
   id: string;
+  code: string;
+  name: string;
   stock: number;
   minStock: number;
   active: boolean;
+}
+
+interface MockUser {
+  id: string;
+  fullName: string;
+}
+
+interface MockSupplier {
+  id: string;
+  name: string;
 }
 
 // Track what reconcile operations were called on the tx
@@ -79,6 +91,8 @@ interface AlertTxCall {
 
 let productStore: Map<string, MockProduct>;
 let alertTxCalls: AlertTxCall[];
+let userStore: Map<string, MockUser>;
+let supplierStore: Map<string, MockSupplier>;
 let movementCounter: number;
 
 // Tracks state per product: the "current open alert" for findFirst to return
@@ -126,13 +140,80 @@ function seedStores(): void {
   ]);
 
   productStore = new Map([
-    [PROD_S1_ID, { id: PROD_S1_ID, stock: 10, minStock: 5, active: true }],
-    [PROD_S2_ID, { id: PROD_S2_ID, stock: 3, minStock: 5, active: true }],
-    [PROD_S3_ID, { id: PROD_S3_ID, stock: 0, minStock: 5, active: true }],
-    [PROD_S4_ID, { id: PROD_S4_ID, stock: 2, minStock: 5, active: true }],
-    [PROD_S12_ID, { id: PROD_S12_ID, stock: 10, minStock: 5, active: true }],
-    [PROD_S5_ID, { id: PROD_S5_ID, stock: 0, minStock: 5, active: true }],
+    [
+      PROD_S1_ID,
+      {
+        id: PROD_S1_ID,
+        code: 'MED-S1',
+        name: 'Scenario Product S1',
+        stock: 10,
+        minStock: 5,
+        active: true,
+      },
+    ],
+    [
+      PROD_S2_ID,
+      {
+        id: PROD_S2_ID,
+        code: 'MED-S2',
+        name: 'Scenario Product S2',
+        stock: 3,
+        minStock: 5,
+        active: true,
+      },
+    ],
+    [
+      PROD_S3_ID,
+      {
+        id: PROD_S3_ID,
+        code: 'MED-S3',
+        name: 'Scenario Product S3',
+        stock: 0,
+        minStock: 5,
+        active: true,
+      },
+    ],
+    [
+      PROD_S4_ID,
+      {
+        id: PROD_S4_ID,
+        code: 'MED-S4',
+        name: 'Scenario Product S4',
+        stock: 2,
+        minStock: 5,
+        active: true,
+      },
+    ],
+    [
+      PROD_S12_ID,
+      {
+        id: PROD_S12_ID,
+        code: 'MED-S12',
+        name: 'Scenario Product S12',
+        stock: 10,
+        minStock: 5,
+        active: true,
+      },
+    ],
+    [
+      PROD_S5_ID,
+      {
+        id: PROD_S5_ID,
+        code: 'MED-S5',
+        name: 'Scenario Product S5',
+        stock: 0,
+        minStock: 5,
+        active: true,
+      },
+    ],
   ]);
+
+  userStore = new Map([
+    [ADMIN_ID, { id: ADMIN_ID, fullName: 'Admin User' }],
+    [MANAGER_ID, { id: MANAGER_ID, fullName: 'Manager User' }],
+  ]);
+
+  supplierStore = new Map([[SUPPLIER1_ID, { id: SUPPLIER1_ID, name: 'SupplierOne SA' }]]);
 
   requestStore = new Map([
     [
@@ -166,6 +247,79 @@ function seedStores(): void {
       },
     ],
   ]);
+}
+
+function buildMovementRow(data: {
+  id: string;
+  productId: string;
+  userId: string;
+  type: string;
+  adjustmentDirection: string | null;
+  quantity: number;
+  resultingStock: number;
+  reason: string;
+  createdAt: Date;
+}) {
+  const product = productStore.get(data.productId);
+  const user = userStore.get(data.userId);
+
+  if (!product || !user) {
+    throw new Error(`Missing related data for movement ${data.id}`);
+  }
+
+  return {
+    ...data,
+    product: {
+      id: product.id,
+      name: product.name,
+      code: product.code,
+    },
+    user: {
+      id: user.id,
+      fullName: user.fullName,
+    },
+  };
+}
+
+function buildRequestRow(request: MockRequest, includeItems: boolean) {
+  const supplier = supplierStore.get(request.supplierId);
+  const requestedByUser = userStore.get(request.requestedByUserId);
+
+  if (!supplier || !requestedByUser) {
+    throw new Error(`Missing related data for request ${request.id}`);
+  }
+
+  return {
+    ...request,
+    supplier: {
+      id: supplier.id,
+      name: supplier.name,
+    },
+    requestedByUser: {
+      id: requestedByUser.id,
+      fullName: requestedByUser.fullName,
+    },
+    items: includeItems
+      ? [...itemStore.values()]
+          .filter((item) => item.replenishmentRequestId === request.id)
+          .map((item) => {
+            const product = productStore.get(item.productId);
+
+            if (!product) {
+              throw new Error(`Missing product ${item.productId} for request item ${item.id}`);
+            }
+
+            return {
+              ...item,
+              product: {
+                id: product.id,
+                name: product.name,
+                code: product.code,
+              },
+            };
+          })
+      : [],
+  };
 }
 
 // ── Prisma mock ───────────────────────────────────────────────────────────────
@@ -336,23 +490,25 @@ describe('Alerts hook smoke tests (S1-S5, S12)', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ({ data }: { data: any; select?: unknown }) => {
         movementCounter += 1;
-        return Promise.resolve({
-          id: `clh3xxk0hmov${movementCounter}356c9a5hook`,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          productId: data.productId as string,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          userId: data.userId as string,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          type: data.type as string,
-          adjustmentDirection: null,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          quantity: data.quantity as number,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          resultingStock: data.resultingStock as number,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          reason: data.reason as string,
-          createdAt: new Date(),
-        });
+        return Promise.resolve(
+          buildMovementRow({
+            id: `clh3xxk0hmov${movementCounter}356c9a5hook`,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            productId: data.productId as string,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            userId: data.userId as string,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            type: data.type as string,
+            adjustmentDirection: null,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            quantity: data.quantity as number,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            resultingStock: data.resultingStock as number,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            reason: data.reason as string,
+            createdAt: new Date(),
+          }),
+        );
       },
     );
 
@@ -419,12 +575,7 @@ describe('Alerts hook smoke tests (S1-S5, S12)', () => {
         if (!where.id) return Promise.resolve(null);
         const row = requestStore.get(where.id);
         if (!row) return Promise.resolve(null);
-        const needsItems = select && 'items' in select;
-        if (needsItems) {
-          const items = [...itemStore.values()].filter((i) => i.replenishmentRequestId === row.id);
-          return Promise.resolve({ ...row, items });
-        }
-        return Promise.resolve({ ...row });
+        return Promise.resolve(buildRequestRow(row, Boolean(select && 'items' in select)));
       },
     );
 

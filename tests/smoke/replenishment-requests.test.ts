@@ -35,6 +35,14 @@ interface RequestDto {
   id: string;
   supplierId: string;
   requestedByUserId: string;
+  supplier: {
+    id: string;
+    name: string;
+  };
+  requestedByUser: {
+    id: string;
+    fullName: string;
+  };
   status: 'PENDING' | 'SENT' | 'RECEIVED' | 'CANCELLED';
   requestedAt: string;
   sentAt: string | null;
@@ -43,11 +51,18 @@ interface RequestDto {
   cancelledAt: string | null;
   cancelledByUserId: string | null;
   notes: string | null;
+  itemsCount: number;
+  estimatedTotal: string;
 }
 
 interface RequestItemDto {
   id: string;
   productId: string;
+  product: {
+    id: string;
+    name: string;
+    code: string;
+  };
   requestedQuantity: number;
   receivedQuantity: number | null;
   unitPrice: number;
@@ -140,7 +155,7 @@ interface MockItem {
   productId: string;
   requestedQuantity: number;
   receivedQuantity: number | null;
-  unitPrice: { toNumber(): number };
+  unitPrice: { toNumber(): number } | null;
 }
 
 interface MockProductSupplier {
@@ -155,8 +170,16 @@ interface MockSupplier {
   whatsapp: string | null;
 }
 
+interface MockUser {
+  id: string;
+  fullName: string;
+  email: string;
+}
+
 interface MockProduct {
   id: string;
+  code: string;
+  name: string;
   stock: number;
   active: boolean;
 }
@@ -165,6 +188,7 @@ let requestStore: Map<string, MockRequest>;
 let itemStore: Map<string, MockItem>;
 let productSupplierStore: Map<string, MockProductSupplier>;
 let supplierStore: Map<string, MockSupplier>;
+let userStore: Map<string, MockUser>;
 let productStore: Map<string, MockProduct>;
 let requestCounter: number;
 let itemCounter: number;
@@ -179,9 +203,18 @@ function seedStores(): void {
     [SUPPLIER2_ID, { id: SUPPLIER2_ID, name: 'SupplierTwo SRL', whatsapp: null }],
   ]);
 
+  userStore = new Map([
+    [ADMIN_ID, { id: ADMIN_ID, fullName: 'Admin User', email: 'admin@example.com' }],
+    [MANAGER_ID, { id: MANAGER_ID, fullName: 'Manager User', email: 'manager@example.com' }],
+    [OPERATOR_ID, { id: OPERATOR_ID, fullName: 'Operator User', email: 'operator@example.com' }],
+  ]);
+
   productStore = new Map([
-    [PROD1_ID, { id: PROD1_ID, stock: 50, active: true }],
-    [PROD2_ID, { id: PROD2_ID, stock: 20, active: true }],
+    [PROD1_ID, { id: PROD1_ID, code: 'MED-001', name: 'Ibuprofen 400mg', stock: 50, active: true }],
+    [
+      PROD2_ID,
+      { id: PROD2_ID, code: 'MED-002', name: 'Paracetamol 500mg', stock: 20, active: true },
+    ],
   ]);
 
   requestStore = new Map([
@@ -299,6 +332,55 @@ function seedStores(): void {
       { productId: PROD2_ID, supplierId: SUPPLIER1_ID, referencePrice: null },
     ],
   ]);
+}
+
+function buildRequestRelations(request: MockRequest) {
+  const supplier = supplierStore.get(request.supplierId);
+  const requestedByUser = userStore.get(request.requestedByUserId);
+
+  if (!supplier || !requestedByUser) {
+    throw new Error(`Missing related data for request ${request.id}`);
+  }
+
+  return {
+    supplier: {
+      id: supplier.id,
+      name: supplier.name,
+    },
+    requestedByUser: {
+      id: requestedByUser.id,
+      fullName: requestedByUser.fullName,
+    },
+  };
+}
+
+function buildRequestItems(requestId: string) {
+  return [...itemStore.values()]
+    .filter((item) => item.replenishmentRequestId === requestId)
+    .map((item) => {
+      const product = productStore.get(item.productId);
+
+      if (!product) {
+        throw new Error(`Missing product ${item.productId} for request item ${item.id}`);
+      }
+
+      return {
+        ...item,
+        product: {
+          id: product.id,
+          code: product.code,
+          name: product.name,
+        },
+      };
+    });
+}
+
+function buildRequestRow(request: MockRequest, includeItems: boolean) {
+  return {
+    ...request,
+    ...buildRequestRelations(request),
+    items: includeItems ? buildRequestItems(request.id) : [],
+  };
 }
 
 // ── Prisma mock ───────────────────────────────────────────────────────────────
@@ -444,7 +526,7 @@ describe('Replenishment Requests smoke tests', () => {
         const itemsData = (data.items?.create ?? []) as Array<{
           productId: string;
           requestedQuantity: number;
-          unitPrice: number;
+          unitPrice: number | null;
         }>;
 
         const newItems: MockItem[] = itemsData.map((itemData) => {
@@ -456,7 +538,8 @@ describe('Replenishment Requests smoke tests', () => {
             productId: itemData.productId,
             requestedQuantity: itemData.requestedQuantity,
             receivedQuantity: null,
-            unitPrice: { toNumber: () => Number(itemData.unitPrice) },
+            unitPrice:
+              itemData.unitPrice != null ? { toNumber: () => Number(itemData.unitPrice) } : null,
           };
           itemStore.set(itemId, item);
           return item;
@@ -464,8 +547,25 @@ describe('Replenishment Requests smoke tests', () => {
 
         // Return shape matching REQUEST_WITH_ITEMS_SELECT
         return Promise.resolve({
-          ...newRequest,
-          items: newItems,
+          ...buildRequestRow(newRequest, false),
+          items: newItems.map((item) => {
+            const product = productStore.get(item.productId);
+
+            if (!product) {
+              throw new Error(
+                `Missing product ${item.productId} for created request item ${item.id}`,
+              );
+            }
+
+            return {
+              ...item,
+              product: {
+                id: product.id,
+                code: product.code,
+                name: product.name,
+              },
+            };
+          }),
         });
       },
     );
@@ -478,13 +578,8 @@ describe('Replenishment Requests smoke tests', () => {
         const row = requestStore.get(where.id);
         if (!row) return Promise.resolve(null);
 
-        // Check if items are requested in select
-        const needsItems = select && 'items' in select;
-        if (needsItems) {
-          const items = [...itemStore.values()].filter((i) => i.replenishmentRequestId === row.id);
-          return Promise.resolve({ ...row, items });
-        }
-        return Promise.resolve({ ...row });
+        const needsItems = Boolean(select && 'items' in select);
+        return Promise.resolve(buildRequestRow(row, needsItems));
       },
     );
 
@@ -519,7 +614,11 @@ describe('Replenishment Requests smoke tests', () => {
 
         // Sort requestedAt DESC
         rows = rows.sort((a, b) => b.requestedAt.getTime() - a.requestedAt.getTime());
-        return Promise.resolve(rows.slice(skip, take !== undefined ? skip + take : undefined));
+        return Promise.resolve(
+          rows
+            .slice(skip, take !== undefined ? skip + take : undefined)
+            .map((row) => buildRequestRow(row, true)),
+        );
       },
     );
 
@@ -694,8 +793,20 @@ describe('Replenishment Requests smoke tests', () => {
       const body = res.body as CreateBody;
       expect(body.request.status).toBe('PENDING');
       expect(body.request.supplierId).toBe(SUPPLIER1_ID);
+      expect(body.request.supplier).toEqual({ id: SUPPLIER1_ID, name: 'SupplierOne SA' });
+      expect(body.request.requestedByUser).toEqual({
+        id: MANAGER_ID,
+        fullName: 'Manager User',
+      });
       expect(body.request.items).toHaveLength(1);
       expect(body.request.items[0]!.unitPrice).toBe(15.0);
+      expect(body.request.items[0]!.product).toEqual({
+        id: PROD1_ID,
+        code: 'MED-001',
+        name: 'Ibuprofen 400mg',
+      });
+      expect(body.request.itemsCount).toBe(1);
+      expect(body.request.estimatedTotal).toBe('75');
       expect(body.request.receivedAt).toBeNull();
       expect(body.request.cancelledAt).toBeNull();
     });
@@ -715,8 +826,8 @@ describe('Replenishment Requests smoke tests', () => {
       expect(body.request.items[0]!.unitPrice).toBe(8.0);
     });
 
-    it('(C3) Create without unitPrice and no referencePrice → 400 UNIT_PRICE_REQUIRED', async () => {
-      // SUPPLIER1 + PROD2 has no referencePrice
+    it('(C3) Create without unitPrice and no referencePrice → 201 with null unitPrice', async () => {
+      // SUPPLIER1 + PROD2 has no referencePrice — price is now optional, stored as null
       const res = await request(app)
         .post('/api/replenishment-requests')
         .set('Authorization', `Bearer ${MANAGER_TOKEN()}`)
@@ -725,8 +836,9 @@ describe('Replenishment Requests smoke tests', () => {
           items: [{ productId: PROD2_ID, requestedQuantity: 2 }], // no unitPrice, no referencePrice
         });
 
-      expect(res.status).toBe(400);
-      expect((res.body as ErrorBody).error).toBe('UNIT_PRICE_REQUIRED');
+      expect(res.status).toBe(201);
+      const body = res.body as CreateBody;
+      expect(body.request.items[0]!.unitPrice).toBeNull();
     });
 
     it('(C4) Create with empty items → 400 REPLENISHMENT_ITEMS_REQUIRED', async () => {
@@ -797,6 +909,19 @@ describe('Replenishment Requests smoke tests', () => {
       expect(body.meta.page).toBe(1);
       expect(typeof body.meta.total).toBe('number');
       expect(typeof body.meta.totalPages).toBe('number');
+      /* eslint-disable @typescript-eslint/no-unsafe-assignment */
+      expect(body.data[0]).toEqual(
+        expect.objectContaining({
+          supplier: expect.objectContaining({ id: expect.any(String), name: expect.any(String) }),
+          requestedByUser: expect.objectContaining({
+            id: expect.any(String),
+            fullName: expect.any(String),
+          }),
+          itemsCount: expect.any(Number),
+          estimatedTotal: expect.any(String),
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-unsafe-assignment */
     });
 
     it('(L2) Filter by status=PENDING → only PENDING requests', async () => {
@@ -889,6 +1014,18 @@ describe('Replenishment Requests smoke tests', () => {
       expect(Array.isArray(body.request.items)).toBe(true);
       expect(body.request.items.length).toBeGreaterThan(0);
       expect(body.request.items[0]!.productId).toBe(PROD1_ID);
+      expect(body.request.supplier).toEqual({ id: SUPPLIER1_ID, name: 'SupplierOne SA' });
+      expect(body.request.requestedByUser).toEqual({
+        id: MANAGER_ID,
+        fullName: 'Manager User',
+      });
+      expect(body.request.items[0]!.product).toEqual({
+        id: PROD1_ID,
+        code: 'MED-001',
+        name: 'Ibuprofen 400mg',
+      });
+      expect(body.request.itemsCount).toBe(1);
+      expect(body.request.estimatedTotal).toBe('55');
     });
 
     it('(G2) Missing request → 404 REPLENISHMENT_REQUEST_NOT_FOUND', async () => {
@@ -936,6 +1073,16 @@ describe('Replenishment Requests smoke tests', () => {
       expect(Array.isArray(body.data)).toBe(true);
       expect(body.data.every((r) => r.supplierId === SUPPLIER1_ID)).toBe(true);
       expect(body.meta.pageSize).toBe(20);
+      /* eslint-disable @typescript-eslint/no-unsafe-assignment */
+      expect(body.data[0]).toEqual(
+        expect.objectContaining({
+          supplier: expect.objectContaining({ id: SUPPLIER1_ID, name: 'SupplierOne SA' }),
+          requestedByUser: expect.objectContaining({ fullName: expect.any(String) }),
+          itemsCount: expect.any(Number),
+          estimatedTotal: expect.any(String),
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-unsafe-assignment */
     });
 
     it('(S2) Different supplierId → filtered correctly', async () => {
@@ -1167,14 +1314,14 @@ describe('Replenishment Requests smoke tests', () => {
       expect(product?.stock).toBe(27);
     });
 
-    it('(RV3) receivedQuantity > requestedQuantity → 400 PARTIAL_RECEIPT_INVALID', async () => {
+    it('(RV3) receivedQuantity > requestedQuantity → 200 allowed (Bug#2: no upper bound)', async () => {
+      // Receiving more than requested is valid (e.g. supplier sends extra stock).
       const res = await request(app)
         .post(`/api/replenishment-requests/${REQ2_ID}/receive`)
         .set('Authorization', `Bearer ${ADMIN_TOKEN()}`)
-        .send({ items: [{ id: ITEM2_ID, receivedQuantity: 999 }] }); // 999 > 20
+        .send({ items: [{ id: ITEM2_ID, receivedQuantity: 999 }] }); // 999 > 20, now allowed
 
-      expect(res.status).toBe(400);
-      expect((res.body as ErrorBody).error).toBe('PARTIAL_RECEIPT_INVALID');
+      expect(res.status).toBe(200);
     });
 
     it('(RV4) Unknown item id in body → 400 REPLENISHMENT_ITEM_NOT_FOUND', async () => {

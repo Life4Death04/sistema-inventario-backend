@@ -173,6 +173,17 @@ export type ListMovementsByProductQuery = z.infer<typeof listMovementsByProductQ
 // Response DTO types
 // ---------------------------------------------------------------------------
 
+export interface MovementProductSummaryDto {
+  id: string;
+  name: string;
+  code: string;
+}
+
+export interface MovementUserSummaryDto {
+  id: string;
+  fullName: string;
+}
+
 /**
  * Shape of a single movement in API responses.
  * adjustmentDirection is null for IN/OUT; INCREASE or DECREASE for ADJUSTMENT.
@@ -182,12 +193,14 @@ export interface MovementDto {
   id: string;
   productId: string;
   userId: string;
+  product: MovementProductSummaryDto;
+  user: MovementUserSummaryDto;
   type: MovementType;
   adjustmentDirection: 'INCREASE' | 'DECREASE' | null;
   quantity: number;
   resultingStock: number;
   reason: string;
-  createdAt: Date;
+  createdAt: string;
 }
 
 /** Paginated list envelope for movement lists. */

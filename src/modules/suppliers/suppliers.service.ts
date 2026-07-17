@@ -14,12 +14,35 @@
 import { suppliersRepository, type SupplierRecord } from './suppliers.repository.js';
 import { AppError } from '../../shared/errors/AppError.js';
 import { ERROR_CODES } from '../../shared/errors/errorCodes.js';
-import { paginate, type PaginatedResponse } from '../../shared/pagination/index.js';
+import { paginate } from '../../shared/pagination/index.js';
 import type {
   CreateSupplierDto,
+  PaginatedSuppliersResponse,
+  SupplierDto,
   UpdateSupplierDto,
   ListSuppliersQuery,
 } from './suppliers.schema.js';
+
+function toDto(record: SupplierRecord): SupplierDto {
+  const products = record.products.map(({ product }) => ({
+    id: product.id,
+    name: product.name,
+    code: product.code,
+  }));
+
+  return {
+    id: record.id,
+    name: record.name,
+    rif: record.rif,
+    whatsapp: record.whatsapp,
+    address: record.address,
+    active: record.active,
+    products,
+    productsCount: products.length,
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+  };
+}
 
 export class SuppliersService {
   // ── Create ─────────────────────────────────────────────────────────────────
@@ -30,7 +53,7 @@ export class SuppliersService {
    * Guards:
    *   - 409 CONFLICT if rif is provided and already in use by another supplier.
    */
-  async create(dto: CreateSupplierDto): Promise<SupplierRecord> {
+  async create(dto: CreateSupplierDto): Promise<SupplierDto> {
     // Duplicate RIF check (only when rif is provided and non-null).
     if (dto.rif != null) {
       const existing = await suppliersRepository.findByRif(dto.rif);
@@ -39,7 +62,8 @@ export class SuppliersService {
       }
     }
 
-    return suppliersRepository.create(dto);
+    const supplier = await suppliersRepository.create(dto);
+    return toDto(supplier);
   }
 
   // ── List ───────────────────────────────────────────────────────────────────
@@ -48,9 +72,9 @@ export class SuppliersService {
    * List suppliers with pagination, active filter, and optional search.
    * Returns a standard PaginatedResponse envelope.
    */
-  async list(query: ListSuppliersQuery): Promise<PaginatedResponse<SupplierRecord>> {
+  async list(query: ListSuppliersQuery): Promise<PaginatedSuppliersResponse> {
     const [data, total] = await suppliersRepository.list(query);
-    return paginate({ data, total, page: query.page, limit: query.limit });
+    return paginate({ data: data.map(toDto), total, page: query.page, limit: query.limit });
   }
 
   // ── Get one ────────────────────────────────────────────────────────────────
@@ -60,12 +84,12 @@ export class SuppliersService {
    * Returns the supplier regardless of active flag (needed for historical detail views).
    * Throws 404 NOT_FOUND when the supplier does not exist at all.
    */
-  async getById(id: string): Promise<SupplierRecord> {
+  async getById(id: string): Promise<SupplierDto> {
     const supplier = await suppliersRepository.findById(id);
     if (!supplier) {
       throw new AppError(ERROR_CODES.NOT_FOUND, 404, 'Supplier not found.');
     }
-    return supplier;
+    return toDto(supplier);
   }
 
   // ── Update ─────────────────────────────────────────────────────────────────
@@ -83,7 +107,7 @@ export class SuppliersService {
    * @param id   Supplier being updated.
    * @param dto  Partial update payload (already validated).
    */
-  async update(id: string, dto: UpdateSupplierDto): Promise<SupplierRecord> {
+  async update(id: string, dto: UpdateSupplierDto): Promise<SupplierDto> {
     // 1. Ensure the target supplier exists.
     const target = await suppliersRepository.findById(id);
     if (!target) {
@@ -98,7 +122,8 @@ export class SuppliersService {
       }
     }
 
-    return suppliersRepository.update(id, dto);
+    const supplier = await suppliersRepository.update(id, dto);
+    return toDto(supplier);
   }
 
   // ── Soft delete ────────────────────────────────────────────────────────────

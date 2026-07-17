@@ -115,12 +115,6 @@ export const ERROR_CODES = {
   INVALID_STATE_TRANSITION: 'INVALID_STATE_TRANSITION',
 
   /**
-   * An item omits unitPrice and no ProductSupplier.referencePrice exists for
-   * the (supplierId, productId) pair. 400.
-   */
-  UNIT_PRICE_REQUIRED: 'UNIT_PRICE_REQUIRED',
-
-  /**
    * A receivedQuantity value is negative or greater than the item quantity. 400.
    */
   PARTIAL_RECEIPT_INVALID: 'PARTIAL_RECEIPT_INVALID',

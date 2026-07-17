@@ -30,6 +30,12 @@ interface SupplierRecord {
   whatsapp: string | null;
   address: string | null;
   active: boolean;
+  products: Array<{
+    id: string;
+    name: string;
+    code: string;
+  }>;
+  productsCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -82,6 +88,7 @@ type MockSupplier = {
 };
 
 let supplierStore: Map<string, MockSupplier>;
+let supplierProductsStore: Map<string, Array<{ id: string; name: string; code: string }>>;
 
 function seedStore() {
   supplierStore = new Map();
@@ -105,6 +112,33 @@ function seedStore() {
     createdAt: new Date('2026-01-02T00:00:00.000Z'),
     updatedAt: new Date('2026-01-02T00:00:00.000Z'),
   });
+
+  supplierProductsStore = new Map([
+    [
+      SUP1_ID,
+      [
+        { id: 'clh3xxk0h1001356c9a5oba8m', name: 'Ibuprofen 400mg', code: 'MED-001' },
+        { id: 'clh3xxk0h1002356c9a5oba9n', name: 'Paracetamol 500mg', code: 'MED-002' },
+      ],
+    ],
+    [SUP2_ID, [{ id: 'clh3xxk0h1003356c9a5obaan', name: 'Amoxicillin 500mg', code: 'MED-003' }]],
+  ]);
+}
+
+function buildSupplierRow(supplier: MockSupplier) {
+  const products = (supplierProductsStore.get(supplier.id) ?? []).map((product) => ({ product }));
+
+  return {
+    id: supplier.id,
+    name: supplier.name,
+    rif: supplier.rif,
+    whatsapp: supplier.whatsapp,
+    address: supplier.address,
+    active: supplier.active,
+    products,
+    createdAt: supplier.createdAt,
+    updatedAt: supplier.updatedAt,
+  };
 }
 
 // ── Mock Prisma ────────────────────────────────────────────────────────────────
@@ -187,7 +221,8 @@ describe('Suppliers CRUD smoke tests', () => {
         updatedAt: new Date(),
       };
       supplierStore.set(newSup.id, newSup);
-      return Promise.resolve(newSup);
+      supplierProductsStore.set(newSup.id, []);
+      return Promise.resolve(buildSupplierRow(newSup));
     });
 
     // supplier.findMany — list suppliers from store with active filter.
@@ -217,7 +252,7 @@ describe('Suppliers CRUD smoke tests', () => {
           }
         }
         const sliced = suppliers.slice(skip, take !== undefined ? skip + take : undefined);
-        return Promise.resolve(sliced);
+        return Promise.resolve(sliced.map(buildSupplierRow));
       },
     );
 
@@ -226,11 +261,11 @@ describe('Suppliers CRUD smoke tests', () => {
       ({ where }: { where: { id?: string; rif?: string } }) => {
         if (where.id) {
           const sup = supplierStore.get(where.id);
-          return Promise.resolve(sup ?? null);
+          return Promise.resolve(sup ? buildSupplierRow(sup) : null);
         }
         if (where.rif) {
           const sup = [...supplierStore.values()].find((s) => s.rif === where.rif);
-          return Promise.resolve(sup ?? null);
+          return Promise.resolve(sup ? buildSupplierRow(sup) : null);
         }
         return Promise.resolve(null);
       },
@@ -245,7 +280,7 @@ describe('Suppliers CRUD smoke tests', () => {
           if (where.NOT?.id && s.id === where.NOT.id) return false;
           return true;
         });
-        return Promise.resolve(match ?? null);
+        return Promise.resolve(match ? buildSupplierRow(match) : null);
       },
     );
 
@@ -256,7 +291,7 @@ describe('Suppliers CRUD smoke tests', () => {
         if (!existing) throw Object.assign(new Error('P2025'), { code: 'P2025' });
         const updated: MockSupplier = { ...existing, ...data, updatedAt: new Date() };
         supplierStore.set(where.id, updated);
-        return Promise.resolve(updated);
+        return Promise.resolve(buildSupplierRow(updated));
       },
     );
 
@@ -370,6 +405,8 @@ describe('Suppliers CRUD smoke tests', () => {
       expect(body.supplier.name).toBe('New Supplier S.A.');
       expect(body.supplier.rif).toBe('J-99999999-9');
       expect(body.supplier.active).toBe(true);
+      expect(body.supplier.products).toEqual([]);
+      expect(body.supplier.productsCount).toBe(0);
     });
 
     it('(b) happy path as MANAGER — creates supplier, returns 201', async () => {
@@ -460,6 +497,14 @@ describe('Suppliers CRUD smoke tests', () => {
       expect(typeof body.meta.page).toBe('number');
       expect(typeof body.meta.limit).toBe('number');
       expect(typeof body.meta.totalPages).toBe('number');
+      /* eslint-disable @typescript-eslint/no-unsafe-assignment */
+      expect(body.data[0]).toEqual(
+        expect.objectContaining({
+          products: expect.any(Array),
+          productsCount: expect.any(Number),
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-unsafe-assignment */
     });
 
     it('(b) pagination meta shape correct', async () => {
@@ -525,6 +570,11 @@ describe('Suppliers CRUD smoke tests', () => {
       const body = res.body as SupplierBody;
       expect(body.supplier.id).toBe(SUP1_ID);
       expect(body.supplier.name).toBe('Pharma Distribuidora C.A.');
+      expect(body.supplier.products).toEqual([
+        { id: 'clh3xxk0h1001356c9a5oba8m', name: 'Ibuprofen 400mg', code: 'MED-001' },
+        { id: 'clh3xxk0h1002356c9a5oba9n', name: 'Paracetamol 500mg', code: 'MED-002' },
+      ]);
+      expect(body.supplier.productsCount).toBe(2);
     });
 
     it('(b) returns inactive supplier (historical view)', async () => {
