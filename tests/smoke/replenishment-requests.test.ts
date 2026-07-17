@@ -1314,14 +1314,14 @@ describe('Replenishment Requests smoke tests', () => {
       expect(product?.stock).toBe(27);
     });
 
-    it('(RV3) receivedQuantity > requestedQuantity → 400 PARTIAL_RECEIPT_INVALID', async () => {
+    it('(RV3) receivedQuantity > requestedQuantity → 200 allowed (Bug#2: no upper bound)', async () => {
+      // Receiving more than requested is valid (e.g. supplier sends extra stock).
       const res = await request(app)
         .post(`/api/replenishment-requests/${REQ2_ID}/receive`)
         .set('Authorization', `Bearer ${ADMIN_TOKEN()}`)
-        .send({ items: [{ id: ITEM2_ID, receivedQuantity: 999 }] }); // 999 > 20
+        .send({ items: [{ id: ITEM2_ID, receivedQuantity: 999 }] }); // 999 > 20, now allowed
 
-      expect(res.status).toBe(400);
-      expect((res.body as ErrorBody).error).toBe('PARTIAL_RECEIPT_INVALID');
+      expect(res.status).toBe(200);
     });
 
     it('(RV4) Unknown item id in body → 400 REPLENISHMENT_ITEM_NOT_FOUND', async () => {

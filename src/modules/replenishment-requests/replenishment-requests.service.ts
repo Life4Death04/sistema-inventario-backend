@@ -412,13 +412,13 @@ export class ReplenishmentRequestsService {
             `Item ${override.id} does not belong to request ${id}.`,
           );
         }
-        // Validate receivedQuantity range: 0 ≤ qty ≤ requestedQuantity.
+        // Validate receivedQuantity: must be non-negative (no upper bound — may receive more than requested).
         const qty = override.receivedQuantity ?? found.requestedQuantity;
-        if (qty < 0 || qty > found.requestedQuantity) {
+        if (qty < 0) {
           throw new AppError(
             ERROR_CODES.PARTIAL_RECEIPT_INVALID,
             400,
-            `receivedQuantity ${qty} for item ${override.id} is out of range [0, ${found.requestedQuantity}].`,
+            `receivedQuantity ${qty} for item ${override.id} must be >= 0.`,
           );
         }
       }
