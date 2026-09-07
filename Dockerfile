@@ -1,31 +1,30 @@
 # Multi-stage Dockerfile for sistema-inventario-backend
-# Stage 1 (deps): install production dependencies only
-# Stage 2 (build): compile TypeScript
-# Stage 3 (runtime): minimal Node 20 Alpine image, non-root user
+# Base: Node 20 Alpine with the OpenSSL runtime required by Prisma
+# Build: generate Prisma Client, compile TypeScript, and prune dev dependencies
+# Runtime: minimal non-root image derived from the same OpenSSL base
 
-# ---- deps ----
-FROM node:20-alpine AS deps
-WORKDIR /app
-# Copy manifests only to leverage Docker cache
-COPY package*.json ./
-RUN npm ci --omit=dev
+# ---- base ----
+FROM node:20-alpine AS base
+RUN apk add --no-cache openssl
 
 # ---- build ----
-FROM node:20-alpine AS build
+FROM base AS build
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+RUN HUSKY=0 npm ci
 COPY . .
-# Generate Prisma client and compile TypeScript
-RUN npx prisma generate && npm run build
+# Preserve the generated client while removing build-only dependencies.
+RUN npx prisma generate \
+    && npm run build \
+    && npm prune --omit=dev --ignore-scripts
 
 # ---- runtime ----
-FROM node:20-alpine AS runtime
+FROM base AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
-# Copy compiled output and production node_modules from previous stages
-COPY --from=deps /app/node_modules ./node_modules
+# Copy compiled output and its generated, production-only dependency tree.
+COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
 COPY package*.json ./
@@ -35,4 +34,4 @@ EXPOSE 3000
 # Run as non-root for defence-in-depth (see design §Security baseline)
 USER node
 
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/server.js"]
