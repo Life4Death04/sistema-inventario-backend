@@ -75,7 +75,8 @@ and enables hot reload via `tsx watch`.
 | `typecheck`    | `tsc --noEmit`               | Type-check without emitting files             |
 | `test`         | `vitest run`                 | Run all tests once                            |
 | `test:watch`   | `vitest`                     | Run tests in watch mode                       |
-| `db:migrate`   | `prisma migrate dev`         | Run pending Prisma migrations                 |
+| `db:migrate`   | `prisma migrate dev`         | Run pending Prisma migrations (development)    |
+| `migrate:deploy` | `prisma migrate deploy`    | Apply committed migrations (production deploy) |
 | `db:seed`      | `prisma db seed`             | Seed the database (admin user)                |
 | `db:reset`     | `prisma migrate reset`       | Reset DB and re-run all migrations            |
 | `db:studio`    | `prisma studio`              | Open Prisma Studio GUI                        |
@@ -90,7 +91,8 @@ sistema-inventario-backend/
 ├── .env.example          # Environment variable template
 ├── .husky/
 │   └── pre-commit        # lint-staged + typecheck before every commit
-├── Dockerfile            # Multi-stage production image (deps → build → runtime)
+├── Dockerfile            # Multi-stage production image (base → build → runtime)
+├── railway.json          # Railway build/deploy contract (Dockerfile, migrations, health)
 ├── docker-compose.dev.yml# Local dev: Postgres 15 + Node 20 with hot reload
 ├── package.json
 ├── tsconfig.json         # TypeScript strict config (NodeNext, ES2022)
@@ -150,6 +152,42 @@ sistema-inventario-backend/
 
 > The server exits with **code 1** and a readable error if any required variable is
 > missing or invalid (checked by Zod in `src/config/env.ts` at startup).
+
+---
+
+## Deploying to Railway
+
+Deployment configuration is tracked in [`railway.json`](./railway.json) so the build
+and release contract lives in the repository instead of undocumented dashboard settings.
+
+The contract declares:
+
+- **Builder**: the multi-stage `Dockerfile` (not Nixpacks).
+- **Pre-deploy migration**: `npm run migrate:deploy` (`prisma migrate deploy`) runs
+  against `DATABASE_URL` before the new version becomes active, so schema changes are
+  applied before traffic is served. The `prisma` CLI ships in production `dependencies`
+  precisely so this command is available inside the release image.
+- **Health check**: `GET /api/health` with a 300s timeout.
+- **Restart policy**: restart `ON_FAILURE`, up to 10 retries.
+
+### Required environment variables (Railway service)
+
+Set these on the Railway backend service before the first deploy:
+
+| Variable             | Value                                                                  |
+| -------------------- | ---------------------------------------------------------------------- |
+| `NODE_ENV`           | `production`                                                           |
+| `DATABASE_URL`       | Reference to the Railway PostgreSQL service connection string          |
+| `JWT_ACCESS_SECRET`  | Independently generated secret (≥ 32 chars) — `openssl rand -base64 48` |
+| `JWT_REFRESH_SECRET` | A **different** independently generated secret (≥ 32 chars)            |
+| `FRONTEND_URL`       | Exact production frontend origin (the localhost fallback is dev-only)  |
+
+Optional overrides (`JWT_ACCESS_TTL`, `JWT_REFRESH_TTL`, `BCRYPT_COST`, `RATE_LIMIT_MAX`,
+`RATE_LIMIT_WINDOW_MS`, `LOG_LEVEL`) follow the same defaults documented above. `PORT` is
+injected by Railway and consumed automatically.
+
+> The first administrator is created by a deliberate one-shot action (`npm run db:seed`
+> with the `SEED_ADMIN_*` variables), not automatically on deploy.
 
 ---
 
