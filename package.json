@@ -21,6 +21,7 @@
     "migrate:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "db:create-admin": "tsx prisma/scripts/create-admin.ts",
+    "seed:admin": "tsx scripts/seed-admin.ts",
     "db:reset": "prisma migrate reset",
     "db:studio": "prisma studio",
     "prepare": "husky"
