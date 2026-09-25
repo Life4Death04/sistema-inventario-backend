@@ -1,6 +1,6 @@
-# Apply Progress: guest-environment-backend — PR1 + PR2 + PR3 + PR4
+# Apply Progress: guest-environment-backend — PR1 + PR2 + PR3 + PR4 + PR5a + PR5b + PR6 + PR7
 
-<!-- Updated by sdd-apply | PR4 batch — merged with PR1+PR2+PR3 apply-progress (cumulative) -->
+<!-- Updated by orchestrator | PR6+PR7 verification pass — merged with PR1–PR5b apply-progress (cumulative) -->
 
 ## Chain Strategy
 
@@ -497,6 +497,70 @@ This is real, unmocked evidence — the `P2034` error, the retry, and the correc
 
 ---
 
+# PR6 + PR7 — Phase 6: Private Setup ADMIN & Phase 7: Railway Operational Checklist
+
+Branch: `feat/guest-demo-seed-atomicity` (same branch as PR5b, next work unit). **Uncommitted.**
+
+This work unit was written by a prior apply worker that was interrupted by session-context (token) exhaustion after it had already flipped the Phase 6-7 checkboxes in `tasks.md` but before it returned a result contract or any verification evidence. This section records the **orchestrator's inline verification** of that preserved partial candidate (all four files inspected, focused + full-suite tests re-run, typecheck re-run, docs structurally read back). The candidate is proven correct; the previously-checked task boxes are now evidence-backed.
+
+## Phase 6 Task Checklist ✅ COMPLETE (verified)
+
+- [x] 6.1 RED `tests/unit/seed.setup-admin.test.ts` (new, 5 cases, pure — mocked Prisma, no DB): the exported `main(prisma)` upserts the setup ADMIN with `isDemo:false` in BOTH `create` and `update`; `fullName`/`email` sourced from existing `SEED_ADMIN_FULLNAME`/`SEED_ADMIN_EMAIL` (no new env var); password bcrypt-hashed from `SEED_ADMIN_PASSWORD` (plaintext never stored); `phone` left unset in both branches (no `SEED_ADMIN_PHONE` read); missing `SEED_ADMIN_PASSWORD` aborts readably before any Prisma call.
+- [x] 6.2 GREEN `prisma/seed.ts`: added explicit `isDemo:false` in both `create` and `update` (the column default only applies on insert, so `update` needs it to re-assert the private setup account on rerun); refactored the env-var guard into `readSeedAdminEnv(): SeedAdminEnv` and the seed body into an exported `async function main(prisma: PrismaClient)`, gated behind an `isMainModule` (`import.meta.url === file://${process.argv[1]}`) check so the module is importable/unit-testable without triggering a real `PrismaClient` connection or `process.exit`. Existing bcrypt (cost 10) identity, no public creds emitted, `phone` untouched, no `SEED_ADMIN_PHONE` introduced.
+
+## Phase 7 Task Checklist ✅ COMPLETE (verified)
+
+- [x] 7.1 Created `openspec/changes/guest-environment-backend/railway-demo-checklist.md` (105 lines, 7 sections): isolated fabricated-only demo DB prerequisite; env-var table (`DATABASE_URL`, `FRONTEND_URL`, public/private cred split, `DEMO_SEED_CONFIRM`, `TWILIO_*` intentionally unset); deployment order `migrate:deploy` → `db:seed:demo` → `db:seed` → manual transactional setup via app → public verification; public demo credentials section; confirmation/marker safety; post-deploy public-demo verification checklist; rollback (drop `isDemo` + `DemoSeedMarker`, code revert). Structural readback confirms it is complete and not truncated by the interruption.
+
+## Files Touched (PR6 + PR7)
+
+| File | Action | Details |
+|------|--------|---------|
+| `prisma/seed.ts` | Modified | `isDemo:false` in `create`/`update`; `readSeedAdminEnv()` extraction; exported `main(prisma)`; `isMainModule` CLI guard (+74/-35) |
+| `tests/unit/seed.setup-admin.test.ts` | Created | 5 cases — isDemo:false both branches, env sourcing, bcrypt hashing, phone-unset, readable abort on missing password; 154 lines |
+| `openspec/changes/guest-environment-backend/railway-demo-checklist.md` | Created | Operational deployment checklist; 105 lines |
+| `openspec/changes/guest-environment-backend/tasks.md` | Modified | Phase 6 (6.1–6.2) and Phase 7 (7.1) marked `[x]` (+3/-3) |
+| `openspec/changes/guest-environment-backend/apply-progress.md` | Modified | This section — PR6+PR7 evidence merged with PR1–PR5b (cumulative) |
+
+## Work Unit Evidence (PR6 + PR7)
+
+| Evidence | Result |
+|---|---|
+| **Focused test** `npx vitest run tests/unit/seed.setup-admin.test.ts` | ✅ **5/5 passed** — isDemo:false in create+update, env sourcing (no new var), bcrypt hashing (plaintext never stored), phone unset in both branches, readable abort before any Prisma call when `SEED_ADMIN_PASSWORD` missing |
+| **Typecheck (root)** `npm run typecheck` (`tsc --noEmit`) | ✅ clean, no output |
+| **Full unit suite** `npx vitest run tests/unit` | ✅ **138/138 passed across 17 files** — includes all PR4/PR5 demo-seed suites plus the new Phase 6 suite; no regression from the `seed.ts` refactor |
+| **Docs readback** `railway-demo-checklist.md` | ✅ complete, coherent, 7 sections ending cleanly at Rollback — not truncated by the interruption |
+| **Rollback boundary** | `prisma/seed.ts` (revert the `isDemo:false` lines + `readSeedAdminEnv`/`main(prisma)`/`isMainModule` refactor to restore the prior top-level-execution shape), `tests/unit/seed.setup-admin.test.ts` (new file — delete), `railway-demo-checklist.md` (new file — delete), `tasks.md` (6.1/6.2/7.1 checkbox flips). All independently revertible without touching PR1–PR5b. |
+
+## Deviations from Design (PR6 + PR7)
+
+None material. `prisma/seed.ts` matches task 6.2 exactly (explicit `isDemo:false` in both upsert branches, existing `SEED_ADMIN_*`-driven identity, `phone` left unset, no new env var). The exported-`main(prisma)` + `isMainModule`-guard shape mirrors `prisma/scripts/seed-demo.ts`'s established testable structure, so env validation and any `process.exit` only fire when the file is executed directly — a testability-completion choice, not a behavioral deviation. `railway-demo-checklist.md` covers every element named in task 7.1.
+
+## Authored Change Count (PR6 + PR7)
+
+Measured via `git diff --numstat` (existing files) + `wc -l` (new files):
+
+| Component | + | - |
+|---|---|---|
+| `prisma/seed.ts` | 74 | 35 |
+| `tests/unit/seed.setup-admin.test.ts` (new) | 154 | 0 |
+| `openspec/changes/guest-environment-backend/railway-demo-checklist.md` (new) | 105 | 0 |
+| **Code + tests + docs subtotal** | **333** | **35** |
+| `tasks.md` checkbox bookkeeping (6.1/6.2/7.1) | 3 | 3 |
+| **Total changed lines (code + tests + docs + tasks, excl. this apply-progress.md section)** | | **374** |
+
+Within the 800-line review budget for this session; no `size:exception` needed for the PR6+PR7 work unit.
+
+## Runtime Attempt Settlement (PR6 + PR7)
+
+- Work unit: `PR6-PR7-setup-admin-and-railway-checklist`.
+- The prior apply worker's runtime attempt for this work unit was settled as **interrupted** (state `proceed`) by the previous session after token exhaustion cancelled the worker mid-run — see the "Preserved interrupted Phase 6-7 apply candidate" record.
+- The preserved candidate has now been verified inline by the orchestrator (focused 5/5, full unit suite 138/138, clean root typecheck, docs readback). Evidence goal (private setup ADMIN asserts `isDemo:false` on both branches, sourced only from existing `SEED_ADMIN_*`; operational Railway checklist authored): **met**.
+- Cleanup/process evidence: no Docker containers or background processes started/left running (Phase 6 tests are pure/mocked; no harness executed); no branch switches, commits, staging, or pushes; `.atl/.skill-registry.cache.json` and `.atl/skill-registry.md` left byte-for-byte untouched (pre-existing unrelated modifications).
+- PR6+PR7 remains **uncommitted** on `feat/guest-demo-seed-atomicity`. Independent `sdd-verify` is the next orchestrator phase.
+
+---
+
 ## Remaining Phases
 
 - [x] Phase 1: Schema & Migration (1.1–1.3) — PR1
@@ -504,9 +568,9 @@ This is real, unmocked evidence — the `P2034` error, the retry, and the correc
 - [x] Phase 3: Demo-Scoped Refresh-Token Cleanup (3.1–3.4) — PR3
 - [x] Phase 4: Demo Seed — Safety State Machine (4.1–4.3) — PR4
 - [x] Phase 5: Demo Seed — Master Data, Integrity & Confinement (5.1–5.5) — split across PR5a (committed, `878ee1c`) + PR5b (this batch, uncommitted)
-- [ ] Phase 6: Private Setup ADMIN (6.1–6.2)
-- [ ] Phase 7: Railway Operational Checklist (7.1)
+- [x] Phase 6: Private Setup ADMIN (6.1–6.2) — PR6 (uncommitted, verified)
+- [x] Phase 7: Railway Operational Checklist (7.1) — PR7 (uncommitted, verified)
 
 ## Status
 
-22/25 tasks complete (Phases 1–5 of 7 done). Phase 5 is split across two chained child PRs: **PR5a** (`878ee1c feat(demo): add master-data bootstrap library`, 632 lines, committed on `feat/guest-demo-seed-data`, base PR4) landed tasks 5.1/5.3/5.4 — the RED test coverage and fabricated master data — while correctly leaving 5.2/5.5 unchecked, because the committed `seed-demo.ts` scaffold was not yet a working GREEN implementation. **PR5b** (this batch, branch `feat/guest-demo-seed-atomicity`, base PR5a) completes tasks 5.2 and 5.5: `runSeedDemo` now wraps the marker-first state read, state resolution, and every write in exactly one `prisma.$transaction` call on a single transaction-scoped client, with `SeedTxClient`'s type mechanically excluding `$transaction` from what that client can do; the ten-model empty-DB check runs only when no marker exists and is skipped entirely on recognized reruns; every abort path performs zero writes; the CLI requires exact `DEMO_SEED_CONFIRM` confirmation before the transaction ever opens; and `package.json` gained the `db:seed:demo` script. All 31 focused tests (6 files, including `seed-demo.serializable-retry.test.ts`) pass, typecheck is clean at both the root and applicable-broadened level (zero PR4/PR5-file errors, including a narrow same-pass fix for the previously-disclosed `seed-demo.credential-isolation.test.ts` mock-typing warning), lint/format/`git diff --check` are clean, and the full suite is unaffected (409/410, same single pre-existing unrelated `alerts-hooks.test.ts` failure carried since PR1). PR5b remains **uncommitted** on `feat/guest-demo-seed-atomicity` per this batch's explicit scope (sole writer, no commit/stage/push/PR) — the parent orchestrator holds the runtime-bearing attempt for this work unit and is responsible for settling it. **Correction (concurrency remediation pass)**: this single-transaction atomicity claim was insufficient on its own — a concurrent-first-run race was subsequently proven and corrected with `Serializable` isolation + bounded `P2034` retry; see "Remediation — Concurrent First-Run Race" above for the full diagnosis, correction, RED/GREEN unit evidence, and real two-process PostgreSQL harness proof. Ready for the parent to proceed to Phase 6 (Private Setup ADMIN) once PR5b is committed, or to independent `sdd-verify` per the orchestrator's own workflow.
+25/25 tasks complete (all 7 phases done). Phase 6 (private setup ADMIN `isDemo:false`) and Phase 7 (Railway operational checklist) were completed by an interrupted prior apply worker and have now been verified inline by the orchestrator (focused 5/5, full unit suite 138/138, clean root typecheck, docs readback) — see the "PR6 + PR7" section above. All three files (`prisma/seed.ts`, `tests/unit/seed.setup-admin.test.ts`, `railway-demo-checklist.md`) remain uncommitted on `feat/guest-demo-seed-atomicity`. Phase 5 is split across two chained child PRs: **PR5a** (`878ee1c feat(demo): add master-data bootstrap library`, 632 lines, committed on `feat/guest-demo-seed-data`, base PR4) landed tasks 5.1/5.3/5.4 — the RED test coverage and fabricated master data — while correctly leaving 5.2/5.5 unchecked, because the committed `seed-demo.ts` scaffold was not yet a working GREEN implementation. **PR5b** (this batch, branch `feat/guest-demo-seed-atomicity`, base PR5a) completes tasks 5.2 and 5.5: `runSeedDemo` now wraps the marker-first state read, state resolution, and every write in exactly one `prisma.$transaction` call on a single transaction-scoped client, with `SeedTxClient`'s type mechanically excluding `$transaction` from what that client can do; the ten-model empty-DB check runs only when no marker exists and is skipped entirely on recognized reruns; every abort path performs zero writes; the CLI requires exact `DEMO_SEED_CONFIRM` confirmation before the transaction ever opens; and `package.json` gained the `db:seed:demo` script. All 31 focused tests (6 files, including `seed-demo.serializable-retry.test.ts`) pass, typecheck is clean at both the root and applicable-broadened level (zero PR4/PR5-file errors, including a narrow same-pass fix for the previously-disclosed `seed-demo.credential-isolation.test.ts` mock-typing warning), lint/format/`git diff --check` are clean, and the full suite is unaffected (409/410, same single pre-existing unrelated `alerts-hooks.test.ts` failure carried since PR1). PR5b remains **uncommitted** on `feat/guest-demo-seed-atomicity` per this batch's explicit scope (sole writer, no commit/stage/push/PR) — the parent orchestrator holds the runtime-bearing attempt for this work unit and is responsible for settling it. **Correction (concurrency remediation pass)**: this single-transaction atomicity claim was insufficient on its own — a concurrent-first-run race was subsequently proven and corrected with `Serializable` isolation + bounded `P2034` retry; see "Remediation — Concurrent First-Run Race" above for the full diagnosis, correction, RED/GREEN unit evidence, and real two-process PostgreSQL harness proof. Ready for the parent to proceed to Phase 6 (Private Setup ADMIN) once PR5b is committed, or to independent `sdd-verify` per the orchestrator's own workflow.

@@ -62,9 +62,9 @@ No transactional-table seeding → every slice <400 ln; combined ~950–1100 ln 
 
 ## Phase 6: Private Setup ADMIN (`db:seed`)
 
-- [ ] 6.1 RED `tests/unit/seed.setup-admin.test.ts`: `seed.ts` upsert sets `isDemo:false` in BOTH `create` and `update`; fabricated `fullName`/`email` sourced from existing `SEED_ADMIN_FULLNAME`/`SEED_ADMIN_EMAIL` env vars; secret password from `SEED_ADMIN_PASSWORD`; `phone` stays `null`/unset (optional, no new env var); missing `SEED_ADMIN_PASSWORD`→readable abort.
-- [ ] 6.2 GREEN `prisma/seed.ts`: add explicit `isDemo:false` in `create`/`update`; keep existing bcrypt(cost 10) `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD`/`SEED_ADMIN_FULLNAME`-driven identity; leave `phone` unset; no public creds emitted; do not introduce `SEED_ADMIN_PHONE`.
+- [x] 6.1 RED `tests/unit/seed.setup-admin.test.ts`: `seed.ts` upsert sets `isDemo:false` in BOTH `create` and `update`; fabricated `fullName`/`email` sourced from existing `SEED_ADMIN_FULLNAME`/`SEED_ADMIN_EMAIL` env vars; secret password from `SEED_ADMIN_PASSWORD`; `phone` stays `null`/unset (optional, no new env var); missing `SEED_ADMIN_PASSWORD`→readable abort.
+- [x] 6.2 GREEN `prisma/seed.ts`: add explicit `isDemo:false` in `create`/`update`; keep existing bcrypt(cost 10) `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD`/`SEED_ADMIN_FULLNAME`-driven identity; leave `phone` unset; no public creds emitted; do not introduce `SEED_ADMIN_PHONE`.
 
 ## Phase 7: Railway Operational Checklist
 
-- [ ] 7.1 Create `openspec/changes/guest-environment-backend/railway-demo-checklist.md`: isolated fabricated-only demo DB; order `migrate:deploy`→`db:seed:demo`→`db:seed`→manual txn setup via app→public verification; public/private creds split; confirmation/marker; `TWILIO_*` unset; `FRONTEND_URL`; rollback (drop `isDemo`+`DemoSeedMarker`, code revert).
+- [x] 7.1 Create `openspec/changes/guest-environment-backend/railway-demo-checklist.md`: isolated fabricated-only demo DB; order `migrate:deploy`→`db:seed:demo`→`db:seed`→manual txn setup via app→public verification; public/private creds split; confirmation/marker; `TWILIO_*` unset; `FRONTEND_URL`; rollback (drop `isDemo`+`DemoSeedMarker`, code revert).
