@@ -1,6 +1,30 @@
-import { ProductUnit, UserRole } from '@prisma/client';
-import type { PrismaClient } from '@prisma/client';
+/**
+ * db:seed:demo — non-destructive master-data bootstrap for the public,
+ * read-only demo environment.
+ *
+ * Per design.md + specs/database-schema/spec.md ("Non-destructive
+ * master-data demo bootstrap", "Demo database isolation and seed-target
+ * safety"): this script NEVER writes transactional tables (InventoryMovement,
+ * Alert, ReplenishmentRequest, ReplenishmentRequestItem) and NEVER changes an
+ * existing Product.stock. It creates/upserts exactly one public `isDemo:true`
+ * ADMIN plus fabricated Category/Supplier/Product/ProductSupplier rows.
+ *
+ * Two independent inputs gate every write (src/shared/demo/seedSafety.ts,
+ * PR4): (a) DEMO_SEED_CONFIRM must match exactly, (b) the persisted
+ * DemoSeedMarker, read FIRST and independently of the confirmation. This
+ * module wires the pure state machine to real Prisma reads/writes — it does
+ * not reimplement the routing logic.
+ *
+ * Usage: DEMO_SEED_CONFIRM=... npm run db:seed:demo
+ */
+import { Prisma, PrismaClient, ProductUnit, UserRole } from '@prisma/client';
 import bcrypt from 'bcrypt';
+import 'dotenv/config';
+import {
+  assertConfirm,
+  resolveSeedState,
+  type SeedState,
+} from '../../src/shared/demo/seedSafety.js';
 import {
   DEMO_ADMIN_EMAIL,
   DEMO_ADMIN_PASSWORD,
@@ -30,6 +54,32 @@ type SeedTxClient = Pick<
 >;
 
 const BCRYPT_COST = 10;
+
+/**
+ * Operator confirmation literal. Must be supplied verbatim via
+ * `DEMO_SEED_CONFIRM` — a missing or mismatched value aborts before any read
+ * result is used for a write decision (specs — "Confirmation failure").
+ */
+export const REQUIRED_CONFIRMATION = 'YES_SEED_THE_DEMO_DATABASE';
+
+/**
+ * Maximum number of times the whole read→resolve→write transaction is
+ * attempted. One initial attempt plus 2 retries — a deterministic, small
+ * bound for a one-shot CLI script, not unbounded backoff ceremony.
+ */
+const MAX_TRANSACTION_ATTEMPTS = 3;
+
+/**
+ * `P2034` is Prisma's stable "transaction conflict" code: PostgreSQL, under
+ * `Serializable` isolation, aborted this transaction because it could not be
+ * placed in any serial order against a concurrent transaction it conflicted
+ * with. This is the ONLY retryable case — every other
+ * `PrismaClientKnownRequestError` (and every non-Prisma error) is a real
+ * failure and must propagate unchanged, not be silently retried.
+ */
+function isRetryableTransactionConflict(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034';
+}
 
 // ---------------------------------------------------------------------------
 // Fabricated master data — pharmacy demo content, no real staff/supplier PII.
@@ -93,6 +143,71 @@ const DEMO_PRODUCTS: DemoProductSeed[] = [
     suppliers: [{ rif: 'J-00000001', referencePrice: '5.00' }],
   },
 ];
+
+// ---------------------------------------------------------------------------
+// Empty-database detection — the 10 approved application models, excluding
+// DemoSeedMarker (tracked separately via markerCount) and _prisma_migrations.
+// ---------------------------------------------------------------------------
+
+/** Counts every row across the 10 approved application models, via `tx`. */
+export async function countApplicationRows(tx: SeedTxClient): Promise<number> {
+  const counts = await Promise.all([
+    tx.user.count(),
+    tx.refreshToken.count(),
+    tx.category.count(),
+    tx.product.count(),
+    tx.supplier.count(),
+    tx.productSupplier.count(),
+    tx.inventoryMovement.count(),
+    tx.alert.count(),
+    tx.replenishmentRequest.count(),
+    tx.replenishmentRequestItem.count(),
+  ]);
+  return counts.reduce((sum, n) => sum + n, 0);
+}
+
+/**
+ * Marker-first state resolution, run ENTIRELY inside the caller's open
+ * transaction (`tx`) — this is the atomicity correction: the marker is read
+ * FIRST and independently awaited; the ten application-model counts (the
+ * empty-DB check) run ONLY when no marker exists yet, and are SKIPPED
+ * entirely on a recognized rerun. Reading everything on `tx` (never on the
+ * root client) closes the concurrent-first-run TOCTOU window — no other
+ * transaction can commit a write between this read and this transaction's
+ * own write, because Postgres serializes concurrent transactions touching
+ * the same rows.
+ */
+export async function resolveSeedStateInTransaction(tx: SeedTxClient): Promise<SeedState> {
+  const markerCount = await tx.demoSeedMarker.count();
+
+  if (markerCount > 0) {
+    const [matchingMarkerCount, totalDemoIdentityCount, matchingDemoIdentityCount] =
+      await Promise.all([
+        tx.demoSeedMarker.count({ where: { version: DEMO_MARKER_VERSION } }),
+        tx.user.count({ where: { isDemo: true } }),
+        tx.user.count({ where: { isDemo: true, email: DEMO_ADMIN_EMAIL, role: UserRole.ADMIN } }),
+      ]);
+    // appIsEmpty is irrelevant once a marker exists — resolveSeedState never
+    // reads it on this branch (per seedSafety.ts's contract), and the ten
+    // application-model counts are never queried, by construction.
+    return resolveSeedState({
+      markerCount,
+      matchingMarkerCount,
+      totalDemoIdentityCount,
+      matchingDemoIdentityCount,
+      appIsEmpty: false,
+    });
+  }
+
+  const totalRows = await countApplicationRows(tx);
+  return resolveSeedState({
+    markerCount: 0,
+    matchingMarkerCount: 0,
+    totalDemoIdentityCount: 0,
+    matchingDemoIdentityCount: 0,
+    appIsEmpty: totalRows === 0,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Bootstrap — runs INSIDE the caller's already-open transaction.
@@ -189,4 +304,89 @@ export async function bootstrapDemoData(tx: SeedTxClient, isFirstRun: boolean): 
       });
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
+
+/**
+ * Runs the full confirm → resolve → (bootstrap | abort) flow against
+ * `prisma`. The marker-first safety read, the state resolution, and every
+ * write all execute inside exactly ONE `$transaction` call per attempt, on
+ * the SAME transaction-scoped client (`tx`) — this is the atomicity
+ * correction: the root `prisma` client is used only to open the
+ * transaction, never to read or write application data directly, so there
+ * is no TOCTOU window between "decide it's safe to write" and "write".
+ *
+ * The transaction runs at `Serializable` isolation — PostgreSQL's default
+ * `ReadCommitted` does NOT serialize the marker/emptiness reads against a
+ * concurrent transaction's writes, so two concurrent first-run processes
+ * could both read "no marker, empty" and both attempt to bootstrap.
+ * `Serializable` makes PostgreSQL detect that conflict and abort the loser
+ * with a retryable `P2034` error instead of silently corrupting state; the
+ * bounded retry loop below re-opens a FRESH transaction (a fresh `tx`) and
+ * reruns the ENTIRE marker-first read → conditional emptiness read → state
+ * resolution → writes sequence from scratch on each attempt — a Postgres
+ * serialization failure invalidates every read/decision the aborted
+ * transaction made, so nothing from a failed attempt may be reused.
+ */
+export async function runSeedDemo(prisma: PrismaClient): Promise<void> {
+  assertConfirm(process.env['DEMO_SEED_CONFIRM'] === REQUIRED_CONFIRMATION);
+
+  for (let attempt = 1; attempt <= MAX_TRANSACTION_ATTEMPTS; attempt += 1) {
+    try {
+      await prisma.$transaction(
+        async (tx: Prisma.TransactionClient) => {
+          const state = await resolveSeedStateInTransaction(tx);
+
+          switch (state) {
+            case 'FIRST_RUN':
+              console.log('🌱  db:seed:demo — first run on an empty database. Bootstrapping…');
+              await bootstrapDemoData(tx, true);
+              console.log('✅  db:seed:demo — bootstrap complete, demo marker persisted.');
+              return;
+            case 'RECOGNIZED_RERUN':
+              console.log(
+                '🔁  db:seed:demo — recognized rerun. Upserting master data (non-destructive)…',
+              );
+              await bootstrapDemoData(tx, false);
+              console.log('✅  db:seed:demo — rerun complete. Zero stock/transactional writes.');
+              return;
+            case 'ABORT_UNMARKED':
+              throw new Error(
+                'db:seed:demo aborted — target database has data but no DemoSeedMarker. Zero writes performed.',
+              );
+            case 'ABORT_MISMATCH':
+              throw new Error(
+                'db:seed:demo aborted — DemoSeedMarker/demo-identity invariant mismatch. Zero writes performed.',
+              );
+          }
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+      return;
+    } catch (err) {
+      if (isRetryableTransactionConflict(err) && attempt < MAX_TRANSACTION_ATTEMPTS) {
+        console.warn(
+          `⚠️  db:seed:demo — serialization conflict (P2034) on attempt ${attempt}/${MAX_TRANSACTION_ATTEMPTS}, retrying with a fresh transaction…`,
+        );
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+const isMainModule = import.meta.url === `file://${process.argv[1] ?? ''}`;
+if (isMainModule) {
+  const prisma = new PrismaClient();
+  runSeedDemo(prisma)
+    .catch((err: unknown) => {
+      console.error('❌  db:seed:demo failed:', err);
+      process.exitCode = 1;
+    })
+    .finally(() => {
+      void prisma.$disconnect();
+    });
 }

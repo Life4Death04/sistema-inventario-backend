@@ -50,19 +50,26 @@ describe('POST /api/users — demo credential confinement', () => {
     // eslint-disable-next-line @typescript-eslint/unbound-method
     vi.mocked(prisma.user.findFirst).mockResolvedValue(null);
     // eslint-disable-next-line @typescript-eslint/unbound-method
-    vi.mocked(prisma.user.create).mockImplementation(
-      ({ data }: { data: Record<string, unknown> }) =>
-        Promise.resolve({
-          id: 'new-user-id',
-          fullName: data['fullName'],
-          email: data['email'],
-          role: data['role'] ?? 'OPERATOR',
-          active: true,
-          phone: null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        }) as unknown as Promise<never>,
-    );
+    const mockUserCreate = vi.mocked(prisma.user.create);
+    // `prisma` here is the `vi.mock` factory object above, typed structurally
+    // as `{ create: vi.fn(), findFirst: vi.fn() }` — but the static import
+    // gives it the REAL Prisma `UserDelegate['create']` type, whose `data`
+    // param is a narrow discriminated union. Casting the whole mock
+    // implementation to that real signature (test-mock-only, never
+    // production code) avoids fighting Prisma's generated overloads while
+    // keeping the actual runtime behavior — reading `data['fullName']` etc.
+    // from whatever body the request handler forwarded — unchanged.
+    mockUserCreate.mockImplementation((({ data }: { data: Record<string, unknown> }) =>
+      Promise.resolve({
+        id: 'new-user-id',
+        fullName: data['fullName'],
+        email: data['email'],
+        role: data['role'] ?? 'OPERATOR',
+        active: true,
+        phone: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })) as unknown as Parameters<typeof mockUserCreate.mockImplementation>[0]);
 
     const { app } = await import('../../src/app.js');
     const res = await request(app)
