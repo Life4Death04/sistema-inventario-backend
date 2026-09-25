@@ -1,6 +1,6 @@
-# Apply Progress: guest-environment-backend — PR1 (Phase 1: Schema & Migration)
+# Apply Progress: guest-environment-backend — PR1 + PR2
 
-<!-- Updated by sdd-apply | correction pass — PR1 apply-progress bookkeeping -->
+<!-- Updated by sdd-apply | PR2 batch — merged with PR1 apply-progress (cumulative) -->
 
 ## Chain Strategy
 
@@ -14,7 +14,11 @@
 - PR6 (base: PR5) → Private `seed.ts` `isDemo:false`
 - PR7 (base: PR6) → Railway operational checklist
 
-## Phase 1 Task Checklist ✅ COMPLETE (this batch)
+---
+
+# PR1 — Phase 1: Schema & Migration
+
+## Phase 1 Task Checklist ✅ COMPLETE
 
 - [x] 1.1 `prisma/schema.prisma`: added `isDemo Boolean @default(false)` + `@@index([isDemo])` on `User`; added standalone `DemoSeedMarker { id, version, createdAt }` model.
 - [x] 1.2 Created additive migration `prisma/migrations/20260925120000_add_user_is_demo_and_demo_marker/migration.sql`: nullable `ADD COLUMN` → backfill `false` → `SET NOT NULL DEFAULT false` → `CREATE INDEX`; `CREATE TABLE "DemoSeedMarker"` created empty. Style matches `20260704120000_add_entity_status`.
@@ -63,9 +67,108 @@ One process note: `npx prisma format` initially reformatted unrelated whitespace
 - State: **complete**
 - Evidence revision: `sha256:4e4edf1b6fc5948ea522e7a82fa52a973894e32b4d1377de6a32e80f4c45de79`
 
+---
+
+# PR2 — Phase 2: JWT Payload & Demo Read-Only Guard
+
+Branch: `feat/guest-demo-read-only` (base: PR1's `feat/guest-environment-schema`), per the `feature-branch-chain` strategy above.
+
+## Phase 2 Task Checklist ✅ COMPLETE
+
+- [x] 2.1 RED `tests/unit/auth.service.test.ts`: added 2 new cases to the access-token describe block — `signAccessToken` embeds `isDemo:true` when passed, and `verifyAccessToken` defaults `isDemo` to `false` on a token signed with no `isDemo` claim (raw `jwt.sign`, simulating a stale pre-change token). Extended the existing round-trip test to assert `payload.isDemo === false` for an explicit `isDemo:false` sign call.
+- [x] 2.2 GREEN `src/modules/auth/auth.service.ts`: `AccessTokenPayload` gained `isDemo: boolean`; `signAccessToken(userId, role, isDemo)` now requires the third argument and embeds it in the signed payload; `verifyAccessToken` return type gained `isDemo: boolean`, computed as `decoded.isDemo ?? false`.
+- [x] 2.3 `src/shared/errors/errorCodes.ts`: added `DEMO_READ_ONLY: 'DEMO_READ_ONLY'` (403, documented as enforced at the `authenticate` chokepoint). `src/types/express.d.ts`: `Request.user` gained required `isDemo: boolean`.
+- [x] 2.4 RED `tests/unit/assertMutationAllowed.test.ts` (new file, 20 cases): safe methods (`GET`/`HEAD`/`OPTIONS`) never throw regardless of `isDemo`; unsafe verbs (`POST`/`PUT`/`PATCH`/`DELETE` + an arbitrary verb `TRACE`) throw `AppError(DEMO_READ_ONLY, 403)` only when `isDemo:true`; non-demo (`isDemo:false`) and defensive no-`req.user` cases never throw for any unsafe verb.
+- [x] 2.5 GREEN `src/shared/middleware/assertMutationAllowed.ts` (new): exported `assertMutationAllowed(req: Request): void`, throws synchronously (matches the existing `requireRole` pattern — not `next(err)`) when `req.user?.isDemo` is true and `req.method` is not in the safe-method set. Wired into `src/shared/middleware/authenticate.ts`: `req.user` now includes `isDemo: payload.isDemo`, and `assertMutationAllowed(req)` is called immediately after, before `next()`.
+- [x] 2.6 RED extended `tests/smoke/auth.test.ts` with a new `describe('Demo read-only guard (isDemo)')` block (8 cases) plus a new `MOCK_USER_DEMO` fixture and an `isDemo`-aware `makeAccessToken` helper: demo `GET /api/auth/me` → 200; demo `POST/PATCH/DELETE/PUT` against `/api/users(/:id)` → 403 `DEMO_READ_ONLY` with the handler never reached (asserted via `prisma.user.findUnique` not called); non-demo `ADMIN` `POST /api/users` unaffected (reaches validation, 400 `VALIDATION_ERROR`, not 403); demo login → 200 + cookie; demo refresh then logout → 200 then 204; a token with **no** `isDemo` claim at all for the demo user's id is treated as non-demo (reaches validation, not blocked).
+- [x] 2.7 GREEN `src/modules/auth/auth.controller.ts`: both `signAccessToken` call sites (login, refresh) now pass `user.isDemo` as the third argument.
+
+## Files Touched (PR2)
+
+| File | Action | Details |
+|------|--------|---------|
+| `src/modules/auth/auth.service.ts` | Modified | `AccessTokenPayload.isDemo`; `signAccessToken(userId, role, isDemo)`; `verifyAccessToken` returns `isDemo` defaulted `false` (+16/-5) |
+| `src/modules/auth/auth.controller.ts` | Modified | Pass `user.isDemo` at both `signAccessToken` call sites (login + refresh) (+2/-2) |
+| `src/shared/errors/errorCodes.ts` | Modified | Added `DEMO_READ_ONLY` (403) (+7) |
+| `src/types/express.d.ts` | Modified | `req.user.isDemo: boolean` (+5) |
+| `src/shared/middleware/assertMutationAllowed.ts` | Created | New named guard function; 39 lines |
+| `src/shared/middleware/authenticate.ts` | Modified | Sets `req.user.isDemo`; calls `assertMutationAllowed(req)` before `next()` (+11/-2) |
+| `tests/unit/auth.service.test.ts` | Modified | 2 new `isDemo` cases + round-trip assertion extended (+28/-1) |
+| `tests/unit/assertMutationAllowed.test.ts` | Created | 20 cases covering safe/unsafe methods × demo/non-demo/no-user; 93 lines |
+| `tests/smoke/auth.test.ts` | Modified | `MOCK_USER_DEMO` fixture, `isDemo`-aware `makeAccessToken`, new `Demo read-only guard (isDemo)` describe block (8 cases) (+142/-2) |
+| `openspec/changes/guest-environment-backend/tasks.md` | Modified | Phase 2 tasks 2.1–2.7 marked `[x]` |
+| `openspec/changes/guest-environment-backend/apply-progress.md` | Modified | This artifact — PR2 section merged with PR1 (cumulative) |
+
+## Work Unit Evidence (PR2)
+
+| Evidence | Result |
+|---|---|
+| **Focused test** `npx vitest run tests/unit/auth.service.test.ts tests/unit/assertMutationAllowed.test.ts tests/smoke/auth.test.ts` | ✅ 68/68 passed (3 test files) — 9 in `auth.service.test.ts`, 20 in `assertMutationAllowed.test.ts`, 39 in `auth.test.ts` (including the 8 new demo-guard cases) |
+| **Typecheck** `npx tsc --noEmit` | ✅ clean, no output |
+| **Lint** `npx eslint <all 9 changed/created files>` | ✅ clean after 2 fixes: `no-unexpected-multiline` (bracket-method chain reformatted to one line) and `@typescript-eslint/unbound-method` (added disable-line comment matching the existing pattern used elsewhere in the same file for `prisma.refreshToken.updateMany`) |
+| **Format** `npx prettier --check` → `--write` | 2 files needed formatting (`assertMutationAllowed.test.ts`, `auth.test.ts`); applied, then re-ran focused tests to confirm no regression |
+| **Runtime harness** supertest against the real Express `app` (mocked Prisma) — `tests/smoke/auth.test.ts` "Demo read-only guard (isDemo)" describe block | ✅ demo `GET /api/auth/me` → 200; demo `POST /api/users`, `PATCH /api/users/:id`, `DELETE /api/users/:id`, `PUT /api/users/:id` (no PUT route exists — proves the `authenticate`-level `.use()` chokepoint blocks even unrouted unsafe verbs before Express 404-routes them) → all 403 `DEMO_READ_ONLY`, with `prisma.user.findUnique` asserted never called (handler never reached); non-demo `ADMIN` `POST /api/users` → NOT 403, reaches validation (400 `VALIDATION_ERROR`); demo login → 200 + `refresh_token` cookie; demo refresh → 200 + rotated cookie; demo logout → 204; stale token (demo user id, no `isDemo` claim) `POST /api/users` → NOT 403, reaches validation — proves the verify-time default-to-`false` from 2.1/2.2 actually protects real users from mid-session lockout, not just in isolation |
+| **Full suite** `npm test` | 375/376 passed. Same 1 pre-existing failure as PR1 in `tests/smoke/alerts-hooks.test.ts` (S5 reconcile assertion, expects 1 update got 2) — unrelated to this change (confirmed unrelated in PR1, unchanged by PR2's diff) |
+| **Rollback boundary** | `src/modules/auth/auth.service.ts` (the `isDemo` additions to `AccessTokenPayload`/`signAccessToken`/`verifyAccessToken`), `src/modules/auth/auth.controller.ts` (the two `user.isDemo` arguments), `src/shared/errors/errorCodes.ts` (`DEMO_READ_ONLY` entry), `src/types/express.d.ts` (`isDemo` field), `src/shared/middleware/assertMutationAllowed.ts` (new file — delete), `src/shared/middleware/authenticate.ts` (the `isDemo` assignment + `assertMutationAllowed` call + import), and the 3 test files' PR2-specific additions. All independently revertible without touching Phase 1 (already merged into this branch's base) or Phase 3+ (not yet started). |
+
+## Deviations from Design (PR2)
+
+None — implementation matches `design.md` exactly: guard extracted as a small named function (`assertMutationAllowed`) called from inside `authenticate` (the universally-first middleware), not a per-route allowlist or a separate `app.ts` guard; safe-method set is `GET`/`HEAD`/`OPTIONS`; stale-token default is `false` via `verifyAccessToken`.
+
+One test-design choice beyond the literal task wording: task 2.6 asks for POST/PUT/PATCH/DELETE coverage, but the app has no route that registers a `PUT` handler anywhere. Rather than skip `PUT` or invent a new route, the test sends `PUT /api/users/:id` and asserts 403 `DEMO_READ_ONLY` — this is a stronger proof than skipping it, because it demonstrates the guard fires from the `authenticate`-level `.use()` middleware (which matches every HTTP method on the mount path) even for a verb with no matching Express route handler, before Express would otherwise fall through to the 404 `notFound` middleware.
+
+## Issues Found (PR2)
+
+None new. The pre-existing `tests/smoke/alerts-hooks.test.ts` S5 failure (flagged in PR1) remains present and unrelated to this change — reconfirmed by the full-suite run above.
+
+## Authored Change Count (PR2) — corrected: complete review diff, not code-only
+
+The original PR2 batch scoped this count to code+test files only ("355 lines, no size:exception needed"). That was **incomplete accounting** — the complete reviewable PR2 diff also includes `tasks.md` bookkeeping and the mandatory `apply-progress.md` evidence artifact, both part of the same change.
+
+| Component | +/- |
+|---|---|
+| Code + tests (`auth.controller.ts` +2/-2, `auth.service.ts` +16/-5, `errorCodes.ts` +7, `authenticate.ts` +11/-2, `express.d.ts` +5, `assertMutationAllowed.ts` new 39, `assertMutationAllowed.test.ts` new 93, `auth.service.test.ts` +28/-1, `auth.test.ts` +142/-2) | 355 |
+| `tasks.md` checkbox bookkeeping (2.1–2.7) | 14 |
+| `apply-progress.md` (mandatory Work Unit Evidence, measured against PR1-committed baseline `84bd32e`) | 97 |
+| **Complete PR2 review diff (maintainer-approved measurement)** | **466** |
+
+Note: this correction pass itself further extends `apply-progress.md` with the size-exception documentation below (self-referential — any evidence file necessarily grows when it documents its own correction). Measured against the same PR1-committed baseline, the final `apply-progress.md` diff after this pass is 110 insertions/5 deletions (115), bringing the complete diff to 355 + 14 + 115 = **484 lines — still within the maintainer-approved 500-line ceiling** (16-line margin). No code or test file was touched to produce this growth; it is documentation-only.
+
+### Size-exception correction (maintainer-approved)
+
+- Prior pass measured only the 355-line code+test subset against the 400-line budget → "no size:exception needed." That was an **incomplete-accounting error**, not a correct exception-free result — it omitted the mandatory `tasks.md`/`apply-progress.md` artifacts from the same reviewable diff.
+- The complete 466-line diff correctly triggers `changed_line_budget_exceeded` against the original 400-line ceiling. The PR2 candidate itself is **unchanged** in this correction pass — no code, test, or middleware logic was touched; the fix is accounting-only.
+- All functional checks (unit, smoke, typecheck, lint, format) **passed** under both the original and corrected accounting — only the line-count classification was wrong, not the implementation (see Re-Verification below).
+- The maintainer reviewed the complete, cohesive 466-line PR2 candidate and **explicitly approved `size:exception` with a 500-line ceiling** for this work unit only (PR1, PR3–PR7 remain governed by their own forecasts above).
+- Rationale accepted: overage is driven by (a) a thorough `assertMutationAllowed` unit-test matrix (20 cases, every safe/unsafe method × demo/non-demo/no-user) and (b) mandatory evidence bookkeeping — not avoidable code bloat. Further splitting would fragment one cohesive guard-plus-tests unit without reducing real review complexity.
+
+## Re-Verification (this pass — size-exception correction)
+
+No production code, test code, or `tasks.md` task state changed in this pass — the PR2 candidate is identical to the prior batch. Checks re-run against that unchanged candidate:
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/unit/auth.service.test.ts tests/unit/assertMutationAllowed.test.ts tests/smoke/auth.test.ts` | ✅ 68/68 passed — same as original PR2 run |
+| `npx tsc --noEmit` | ✅ clean |
+| `npx eslint <9 PR2 files>` (check-only) | ✅ clean, no output |
+| `npx prettier --check <same 9 files>` (check-only) | ✅ "All matched files use Prettier code style!" |
+
+No defect exposed by any check, so no code or test correction was made — this pass is accounting-and-documentation-only, as scoped.
+
+## Runtime Attempt Settlement (PR2)
+
+- Work unit: `PR2-jwt-demo-read-only-guard` — **superseded by** `PR2-jwt-demo-read-only-guard-size-exception` (this pass)
+- Prior attempt (400-line ceiling): functional checks **passed**, but line-count accounting was incomplete; corrected to the complete 466-line diff it evaluates to `changed_line_budget_exceeded`. Maintainer reset the objective rather than accept the incomplete accounting.
+- Current attempt (`PR2-jwt-demo-read-only-guard-size-exception`, 500-line ceiling): goal is to re-verify the maintainer-approved 466-line candidate and persist correct evidence — **met** by this document.
+- State: **complete** — the orchestrator settled the exception-verification attempt successfully with evidence revision `sha256:41c25e6b570c9b39ce53885be342e86a91b98d5a23071cddc017f417da832dbb`. **Correction**: the prior document incorrectly recorded the earlier opaque attempt token as though it were the evidence revision — `sha256:b2cee7cddd2db7672175269627baac3e8c79f883530de13de34f25325894573d` was attempt authority, not evidence. The exception-verification authority token was `sha256:c7dbcb47b9f3e3de8aa71e9f2c526b2a98b407b956ba6366376a4cea521d9062`.
+- Cleanup/process evidence: no Docker containers or background processes started/left running (`docker ps -a` shows no `sdd-guest-env-pg` container; no orphaned `vitest` processes); no branch switches, commits, or pushes; `.atl/*` untouched (its `git status` modifications are pre-existing/unrelated).
+
+---
+
 ## Remaining Phases
 
-- [ ] Phase 2: JWT Payload & Demo Read-Only Guard (2.1–2.7)
+- [x] Phase 1: Schema & Migration (1.1–1.3) — PR1
+- [x] Phase 2: JWT Payload & Demo Read-Only Guard (2.1–2.7) — PR2
 - [ ] Phase 3: Demo-Scoped Refresh-Token Cleanup (3.1–3.4)
 - [ ] Phase 4: Demo Seed — Safety State Machine (4.1–4.3)
 - [ ] Phase 5: Demo Seed — Master Data, Integrity & Confinement (5.1–5.5)
@@ -74,4 +177,6 @@ One process note: `npx prisma format` initially reformatted unrelated whitespace
 
 ## Status
 
-3/25 tasks complete (Phase 1 of 7 done). At apply completion, changes were left uncommitted. The version-control handoff places this work unit on `feat/guest-environment-schema`, based on tracker `feat/guest-environment-backend`; commit and delivery remain outside SDD apply. Ready for independent SDD verification or the next apply batch (Phase 2), pending orchestrator direction.
+10/25 tasks complete (Phases 1–2 of 7 done). At apply completion, PR2 changes were left uncommitted on `feat/guest-demo-read-only` (base: PR1's `feat/guest-environment-schema`, itself based on tracker `feat/guest-environment-backend`); commit and delivery remain outside SDD apply.
+
+PR2's complete review diff (466 changed lines at approval, 484 after correction evidence) has maintainer-approved `size:exception` with a 500-line ceiling, superseding the original 400-line budget for this work unit only. The prior 400-line attempt passed all functional checks but was reset for incomplete line-count accounting; the exception-verification attempt (`PR2-jwt-demo-read-only-guard-size-exception`) re-confirmed all functional checks and settled **complete** at evidence revision `sha256:41c25e6b570c9b39ce53885be342e86a91b98d5a23071cddc017f417da832dbb`. Ready for independent SDD verification or the next apply batch (Phase 3), pending orchestrator direction.

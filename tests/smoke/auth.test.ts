@@ -103,6 +103,13 @@ const MOCK_USER_OPERATOR = {
   role: 'OPERATOR' as const,
 };
 
+const MOCK_USER_DEMO = {
+  ...MOCK_USER_ACTIVE,
+  id: 'cuid-user-demo-004',
+  email: 'demo@highmeds.local',
+  isDemo: true,
+};
+
 // ── RefreshToken mock store ───────────────────────────────────────────────────
 
 type MockRefreshToken = {
@@ -154,9 +161,19 @@ vi.mock('../../src/shared/utils/prisma.js', () => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function makeAccessToken(userId: string, role: string): string {
+/**
+ * Craft an access JWT for tests.
+ *
+ * `isDemo` is intentionally optional (not defaulted to `false`): omitting it
+ * produces a "stale" token with NO isDemo claim at all — the exact shape of
+ * a token issued before this change — so tests can assert the verify-time
+ * default-to-false behavior distinctly from an explicit isDemo:false claim.
+ */
+function makeAccessToken(userId: string, role: string, isDemo?: boolean): string {
+  const payload: Record<string, unknown> = { sub: userId, role };
+  if (isDemo !== undefined) payload['isDemo'] = isDemo;
   return jwt.sign(
-    { sub: userId, role },
+    payload,
     process.env['JWT_ACCESS_SECRET'] ?? 'dev-access-secret-minimum-32-chars-ok',
     { algorithm: 'HS256', expiresIn: '15m' },
   );
@@ -212,9 +229,11 @@ describe('Auth endpoints smoke tests', () => {
         if (where.email === MOCK_USER_ACTIVE.email) return Promise.resolve(MOCK_USER_ACTIVE);
         if (where.email === MOCK_USER_INACTIVE.email) return Promise.resolve(MOCK_USER_INACTIVE);
         if (where.email === MOCK_USER_OPERATOR.email) return Promise.resolve(MOCK_USER_OPERATOR);
+        if (where.email === MOCK_USER_DEMO.email) return Promise.resolve(MOCK_USER_DEMO);
         if (where.id === MOCK_USER_ACTIVE.id) return Promise.resolve(MOCK_USER_ACTIVE);
         if (where.id === MOCK_USER_INACTIVE.id) return Promise.resolve(MOCK_USER_INACTIVE);
         if (where.id === MOCK_USER_OPERATOR.id) return Promise.resolve(MOCK_USER_OPERATOR);
+        if (where.id === MOCK_USER_DEMO.id) return Promise.resolve(MOCK_USER_DEMO);
         return Promise.resolve(null);
       },
     );
@@ -671,6 +690,127 @@ describe('Auth endpoints smoke tests', () => {
         expect(caught.code).toBe('INTERNAL_ERROR');
         expect(caught.statusCode).toBe(500);
       }
+    });
+  });
+
+  // ── Demo read-only guard (isDemo) ──────────────────────────────────────────
+  //
+  // Tests per tasks.md 2.6 + specs/auth/spec.md scenarios:
+  //   - demo GET passes
+  //   - demo POST/PUT/PATCH/DELETE → 403 DEMO_READ_ONLY
+  //   - non-demo unaffected
+  //   - demo login/refresh/logout usable
+  //   - stale token (no isDemo claim) is treated as non-demo
+  //
+  // Uses /api/users as the mutation surface: it is mounted behind
+  // `usersRouter.use(authenticate, requireRole('ADMIN'))`, so the demo
+  // ADMIN token used below has the role to pass requireRole — proving the
+  // 403 comes from the read-only guard itself, inside `authenticate`,
+  // BEFORE requireRole or the business handler ever run.
+
+  describe('Demo read-only guard (isDemo)', () => {
+    it('(a) demo GET /api/auth/me — 200 (safe method always allowed)', async () => {
+      const token = makeAccessToken(MOCK_USER_DEMO.id, MOCK_USER_DEMO.role, true);
+      const res = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(200);
+      const body = res.body as MeBody;
+      expect(body.user.id).toBe(MOCK_USER_DEMO.id);
+    });
+
+    it.each(['post', 'patch', 'delete', 'put'] as const)(
+      '(b) demo %s /api/users(/:id) — 403 DEMO_READ_ONLY, handler never runs',
+      async (method) => {
+        const token = makeAccessToken(MOCK_USER_DEMO.id, MOCK_USER_DEMO.role, true);
+        const path = method === 'post' ? '/api/users' : '/api/users/cuid-some-id';
+
+        const res = await request(app)[method](path).set('Authorization', `Bearer ${token}`);
+
+        expect(res.status).toBe(403);
+        const body = res.body as ErrorBody;
+        expect(body.error).toBe('DEMO_READ_ONLY');
+
+        // No Prisma user-mutation call was reached (handler never ran).
+        const { prisma } = await import('../../src/shared/utils/prisma.js');
+        // eslint-disable-next-line @typescript-eslint/unbound-method
+        expect(prisma.user.findUnique).not.toHaveBeenCalled();
+      },
+    );
+
+    it('(c) non-demo ADMIN POST /api/users is unaffected by the guard', async () => {
+      // No isDemo claim at all — an ordinary current-shape non-demo token.
+      const token = makeAccessToken(MOCK_USER_ACTIVE.id, MOCK_USER_ACTIVE.role, false);
+
+      const res = await request(app)
+        .post('/api/users')
+        .set('Authorization', `Bearer ${token}`)
+        .send({});
+
+      // Guard must NOT fire — request reaches body validation instead.
+      expect(res.status).not.toBe(403);
+      const body = res.body as ErrorBody;
+      expect(body.error).not.toBe('DEMO_READ_ONLY');
+      expect(res.status).toBe(400);
+      expect(body.error).toBe('VALIDATION_ERROR');
+    });
+
+    it('(d) demo account logs in — 200 with { user, token } and sets refresh cookie', async () => {
+      const res = await request(app)
+        .post('/api/auth/login')
+        .send({ email: MOCK_USER_DEMO.email, password: PASSWORD_PLAIN });
+
+      expect(res.status).toBe(200);
+      const body = res.body as LoginBody;
+      expect(body.user.id).toBe(MOCK_USER_DEMO.id);
+      expect(typeof body.token).toBe('string');
+      const cookieVal = getCookieValue(
+        res.headers as Record<string, string | string[] | undefined>,
+        'refresh_token',
+      );
+      expect(cookieVal).toBeTruthy();
+    });
+
+    it('(e) demo account refreshes then logs out — both remain usable', async () => {
+      const loginRes = await request(app)
+        .post('/api/auth/login')
+        .send({ email: MOCK_USER_DEMO.email, password: PASSWORD_PLAIN });
+      expect(loginRes.status).toBe(200);
+
+      const cookiePair = getCookieValue(
+        loginRes.headers as Record<string, string | string[] | undefined>,
+        'refresh_token',
+      );
+
+      const refreshRes = await request(app).post('/api/auth/refresh').set('Cookie', cookiePair);
+      expect(refreshRes.status).toBe(200);
+      const refreshBody = refreshRes.body as RefreshBody;
+      expect(typeof refreshBody.token).toBe('string');
+
+      const newCookiePair = getCookieValue(
+        refreshRes.headers as Record<string, string | string[] | undefined>,
+        'refresh_token',
+      );
+
+      const logoutRes = await request(app).post('/api/auth/logout').set('Cookie', newCookiePair);
+      expect(logoutRes.status).toBe(204);
+    });
+
+    it('(f) stale access token (no isDemo claim) is treated as non-demo — guard does not fire', async () => {
+      // Same demo user id, but the token itself carries no isDemo claim at
+      // all (pre-change token shape). verifyAccessToken must default it to
+      // false, so the read-only guard must NOT block this mutating request.
+      const staleToken = makeAccessToken(MOCK_USER_DEMO.id, MOCK_USER_DEMO.role);
+
+      const res = await request(app)
+        .post('/api/users')
+        .set('Authorization', `Bearer ${staleToken}`)
+        .send({});
+
+      expect(res.status).not.toBe(403);
+      const body = res.body as ErrorBody;
+      expect(body.error).not.toBe('DEMO_READ_ONLY');
+      expect(res.status).toBe(400);
+      expect(body.error).toBe('VALIDATION_ERROR');
     });
   });
 });

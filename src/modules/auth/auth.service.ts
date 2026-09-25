@@ -30,6 +30,12 @@ import { env } from '../../config/env.js';
 export interface AccessTokenPayload {
   sub: string;
   role: UserRole;
+  /**
+   * True when the token belongs to the shared read-only demo account.
+   * Sourced from User.isDemo at sign time (login/refresh). Independent of
+   * role — a demo account keeps its assigned role (e.g. ADMIN).
+   */
+  isDemo: boolean;
   iat: number;
   exp: number;
 }
@@ -74,16 +80,17 @@ export class AuthService {
   /**
    * Sign a short-lived access JWT.
    *
-   * Payload: { sub: userId, role, iat, exp }
+   * Payload: { sub: userId, role, isDemo, iat, exp }
    * Algorithm: HS256.
    * TTL: env.JWT_ACCESS_TTL (default '15m').
    * Transport: Authorization: Bearer <token> header.
    *
    * @param userId  The user's cuid primary key.
    * @param role    The user's current role (embedded in token — NOT re-read on each request).
+   * @param isDemo  Sourced from the current User.isDemo record at sign time.
    */
-  signAccessToken(userId: string, role: UserRole): string {
-    const payload = { sub: userId, role };
+  signAccessToken(userId: string, role: UserRole, isDemo: boolean): string {
+    const payload = { sub: userId, role, isDemo };
     return jwt.sign(payload, env.JWT_ACCESS_SECRET, {
       algorithm: 'HS256',
       expiresIn: env.JWT_ACCESS_TTL as jwt.SignOptions['expiresIn'],
@@ -97,14 +104,18 @@ export class AuthService {
    *   - Expired:          TOKEN_EXPIRED  (401)
    *   - Invalid/tampered: INVALID_TOKEN  (401)
    *
+   * Tokens issued before the demo-environment change carry no `isDemo`
+   * claim — this defaults it to `false` so stale tokens are treated as
+   * non-demo instead of locking users out mid-session.
+   *
    * @param token  Raw JWT string from the Authorization header (without 'Bearer ').
    */
-  verifyAccessToken(token: string): { sub: string; role: UserRole } {
+  verifyAccessToken(token: string): { sub: string; role: UserRole; isDemo: boolean } {
     try {
       const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET, {
         algorithms: ['HS256'],
       }) as AccessTokenPayload;
-      return { sub: decoded.sub, role: decoded.role };
+      return { sub: decoded.sub, role: decoded.role, isDemo: decoded.isDemo ?? false };
     } catch (err) {
       if (err instanceof jwt.TokenExpiredError) {
         throw new AppError(ERROR_CODES.TOKEN_EXPIRED, 401, 'Access token has expired.');

@@ -121,7 +121,7 @@ export async function loginController(req: Request, res: Response): Promise<void
   });
 
   // Sign both tokens.
-  const accessToken = authService.signAccessToken(user.id, user.role);
+  const accessToken = authService.signAccessToken(user.id, user.role, user.isDemo);
   const refreshTokenJwt = authService.signRefreshToken(user.id, refreshTokenRow.id);
 
   // Set the refresh token cookie.
@@ -200,7 +200,7 @@ export async function refreshController(req: Request, res: Response): Promise<vo
     ip: req.ip,
   });
 
-  const newAccessToken = authService.signAccessToken(user.id, user.role);
+  const newAccessToken = authService.signAccessToken(user.id, user.role, user.isDemo);
   const newRefreshJwt = authService.signRefreshToken(user.id, newRow.id);
 
   const maxAgeSeconds = authService.parseTtlToSeconds(env.JWT_REFRESH_TTL);

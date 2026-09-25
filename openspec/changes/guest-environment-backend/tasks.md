@@ -31,13 +31,13 @@ No transactional-table seeding → every slice <400 ln; combined ~950–1100 ln 
 
 ## Phase 2: JWT Payload & Demo Read-Only Guard
 
-- [ ] 2.1 RED `tests/unit/auth.service.test.ts`: sign embeds `isDemo`; verify defaults `false` when claim absent.
-- [ ] 2.2 GREEN `auth.service.ts`: `AccessTokenPayload.isDemo`; `signAccessToken(userId, role, isDemo)`.
-- [ ] 2.3 `errorCodes.ts`: add `DEMO_READ_ONLY` (403). `express.d.ts`: `req.user.isDemo: boolean`.
-- [ ] 2.4 RED `tests/unit/assertMutationAllowed.test.ts`: GET/HEAD/OPTIONS no-op; unsafe verb+`isDemo`→throws `DEMO_READ_ONLY`; non-demo never throws.
-- [ ] 2.5 GREEN `src/shared/middleware/assertMutationAllowed.ts` (new); wire into `authenticate.ts`: set `req.user.isDemo`, call guard before `next()`.
-- [ ] 2.6 RED extend `tests/smoke/auth.test.ts`: demo GET passes; POST/PUT/PATCH/DELETE→403; non-demo unaffected; demo login/refresh/logout usable; stale token (no `isDemo`) treated non-demo.
-- [ ] 2.7 GREEN `auth.controller.ts`: pass `user.isDemo` at both sign sites.
+- [x] 2.1 RED `tests/unit/auth.service.test.ts`: sign embeds `isDemo`; verify defaults `false` when claim absent.
+- [x] 2.2 GREEN `auth.service.ts`: `AccessTokenPayload.isDemo`; `signAccessToken(userId, role, isDemo)`.
+- [x] 2.3 `errorCodes.ts`: add `DEMO_READ_ONLY` (403). `express.d.ts`: `req.user.isDemo: boolean`.
+- [x] 2.4 RED `tests/unit/assertMutationAllowed.test.ts`: GET/HEAD/OPTIONS no-op; unsafe verb+`isDemo`→throws `DEMO_READ_ONLY`; non-demo never throws.
+- [x] 2.5 GREEN `src/shared/middleware/assertMutationAllowed.ts` (new); wire into `authenticate.ts`: set `isDemo`, call guard before `next()`.
+- [x] 2.6 RED extend `tests/smoke/auth.test.ts`: demo GET passes; POST/PUT/PATCH/DELETE→403; non-demo unaffected; demo login/refresh/logout usable; stale token (no `isDemo`) treated non-demo.
+- [x] 2.7 GREEN `auth.controller.ts`: pass `user.isDemo` at both sign sites.
 
 ## Phase 3: Demo-Scoped Refresh-Token Cleanup
 
