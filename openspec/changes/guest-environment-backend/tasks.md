@@ -48,9 +48,9 @@ No transactional-table seeding → every slice <400 ln; combined ~950–1100 ln 
 
 ## Phase 4: Demo Seed — Safety State Machine
 
-- [ ] 4.1 `src/shared/demo/demoCredentials.ts` (new): `DEMO_ADMIN_EMAIL`, `DEMO_ADMIN_PASSWORD`, `DEMO_MARKER_VERSION` constants.
-- [ ] 4.2 RED `tests/unit/seed-demo.safety.test.ts` (pure, no DB): mismatched/missing confirm→`assertConfirm` throws; no marker+empty→`FIRST_RUN`; no marker+non-empty→`ABORT_UNMARKED`; marker present→`RECOGNIZED_RERUN` (skips empty-check); marker/version or identity mismatch→`ABORT_MISMATCH`.
-- [ ] 4.3 GREEN `src/shared/demo/seedSafety.ts` (new): pure `assertConfirm`+`resolveSeedState` — marker-first routing (`FIRST_RUN`/`RECOGNIZED_RERUN`/`ABORT_UNMARKED`/`ABORT_MISMATCH`) from injected booleans/counts, no Prisma/script coupling; executable bootstrap wiring arrives in PR5.
+- [x] 4.1 `src/shared/demo/demoCredentials.ts` (new): `DEMO_ADMIN_EMAIL`, `DEMO_ADMIN_PASSWORD`, `DEMO_MARKER_VERSION` constants.
+- [x] 4.2 RED `tests/unit/seed-demo.safety.test.ts` (pure, no DB): mismatched/missing confirm→`assertConfirm` throws; no marker+empty→`FIRST_RUN`; no marker+non-empty→`ABORT_UNMARKED`; marker present→`RECOGNIZED_RERUN` (skips empty-check); marker/version or identity mismatch→`ABORT_MISMATCH`.
+- [x] 4.3 GREEN `src/shared/demo/seedSafety.ts` (new): pure `assertConfirm`+`resolveSeedState` — marker-first routing (`FIRST_RUN`/`RECOGNIZED_RERUN`/`ABORT_UNMARKED`/`ABORT_MISMATCH`) from injected booleans/counts, no Prisma/script coupling; executable bootstrap wiring arrives in PR5.
 
 ## Phase 5: Demo Seed — Master Data, Integrity & Confinement
 

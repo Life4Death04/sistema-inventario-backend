@@ -1,6 +1,6 @@
-# Apply Progress: guest-environment-backend — PR1 + PR2 + PR3
+# Apply Progress: guest-environment-backend — PR1 + PR2 + PR3 + PR4
 
-<!-- Updated by sdd-apply | PR3 batch — merged with PR1+PR2 apply-progress (cumulative) -->
+<!-- Updated by sdd-apply | PR4 batch — merged with PR1+PR2+PR3 apply-progress (cumulative) -->
 
 ## Chain Strategy
 
@@ -234,18 +234,100 @@ The final read-back measured 395 changed lines against the PR2-committed baselin
 
 ---
 
+# PR4 — Phase 4: Demo Seed — Safety State Machine
+
+Branch: `feat/guest-seed-safety` (base: PR3's `feat/guest-refresh-cleanup`), per the `feature-branch-chain` strategy above.
+
+## Phase 4 Task Checklist ✅ COMPLETE (corrected — see Remediation below)
+
+- [x] 4.1 `src/shared/demo/demoCredentials.ts` (new): committed public constants `DEMO_ADMIN_EMAIL` (`demo@highmeds.local`), `DEMO_ADMIN_PASSWORD` (`HighMedsDemo2026!`), `DEMO_MARKER_VERSION` (`'1'`) — intentionally hardcoded/public, distinct from env-driven private `SEED_ADMIN_*`.
+- [x] 4.2 RED `tests/unit/seed-demo.safety.test.ts` (12 cases, pure — no DB/Prisma): `assertConfirm(false)` throws; `assertConfirm(true)` does not throw; `resolveSeedState` — no marker+empty→`FIRST_RUN`; no marker+non-empty→`ABORT_UNMARKED`; exactly 1 valid marker + exactly 1 valid demo identity→`RECOGNIZED_RERUN`; same + non-empty DB→still `RECOGNIZED_RERUN` (skips empty-check); 1 marker/wrong version→`ABORT_MISMATCH`; 1 valid marker/0 identities→`ABORT_MISMATCH`; 1 valid marker/2 duplicate-matching identities→`ABORT_MISMATCH`; **2 matching marker rows→`ABORT_MISMATCH`** (cardinality); **1 valid identity + 1 unrelated `isDemo:true` row→`ABORT_MISMATCH`** (identity cardinality).
+- [x] 4.3 GREEN `src/shared/demo/seedSafety.ts` (new): pure `assertConfirm(confirmed: boolean): void` and `resolveSeedState(input: SeedStateInput): SeedState` — marker-first routing from injected **counts** `{ markerCount, matchingMarkerCount, totalDemoIdentityCount, matchingDemoIdentityCount, appIsEmpty }`; `RECOGNIZED_RERUN` requires `markerCount===1 && matchingMarkerCount===1 && totalDemoIdentityCount===1 && matchingDemoIdentityCount===1` — cardinality-exact, not existence-only. No Prisma import, no `process.env` read, no script coupling.
+
+## Files Touched (PR4)
+
+| File | Action | Details |
+|------|--------|---------|
+| `src/shared/demo/demoCredentials.ts` | Created | 3 public constants; 33 lines |
+| `src/shared/demo/seedSafety.ts` | Created/Corrected | `assertConfirm` + `resolveSeedState` + `SeedStateInput`/`SeedState`; count-based cardinality fields; 126 lines |
+| `tests/unit/seed-demo.safety.test.ts` | Created/Corrected | 12 cases covering every state-machine branch incl. 2 cardinality regressions; 151 lines |
+| `openspec/changes/guest-environment-backend/tasks.md` | Modified | Phase 4 tasks 4.1–4.3 marked `[x]` |
+| `openspec/changes/guest-environment-backend/apply-progress.md` | Modified | This artifact — PR4 section merged with PR1+PR2+PR3 (cumulative) |
+
+## Work Unit Evidence (PR4)
+
+| Evidence | Result |
+|---|---|
+| **RED confirmation (original)** `npx vitest run tests/unit/seed-demo.safety.test.ts` (before 4.1/4.3 existed) | ❌ Failed to load url `../../src/shared/demo/seedSafety.js` — production code absent, not a broken harness. |
+| **Focused test (final, corrected GREEN)** `npx vitest run tests/unit/seed-demo.safety.test.ts` | ✅ 12/12 passed — `assertConfirm` (3 cases) + `resolveSeedState` (9 cases: all 4 states, empty-check-skip branch, and the 2 cardinality-regression cases added in remediation) |
+| **Typecheck** `npx tsc --noEmit` | ✅ clean, no output |
+| **Lint** `npx eslint src/shared/demo/demoCredentials.ts src/shared/demo/seedSafety.ts tests/unit/seed-demo.safety.test.ts` | ✅ clean, no output, no fixes needed |
+| **Format** `npx prettier --check` (same 3 files) | ✅ "All matched files use Prettier code style!" |
+| **`git diff --check`** | ✅ exit 0, no whitespace errors |
+| **Runtime harness** | N/A — pure safety policy; executable database bootstrap arrives in PR5. Both functions have zero I/O, so there is no runtime boundary to exercise in this work unit. |
+| **Rollback boundary** | `src/shared/demo/demoCredentials.ts`, `src/shared/demo/seedSafety.ts`, `tests/unit/seed-demo.safety.test.ts` — all net-new, independently revertible, nothing else imports from `src/shared/demo/` yet. |
+
+## Deviations from Design (PR4)
+
+One design-completion choice, not a deviation: `design.md`'s pseudocode reads `assertConfirm(env DEMO_SEED_CONFIRM === literal)`, which this implementation takes literally — `assertConfirm` accepts the pre-computed boolean (`confirmed: boolean`), not the raw string or an embedded literal. This keeps the function fully pure (no hardcoded confirmation phrase invented here, no coupling to how the caller derives the literal) and matches task 4.3's "from injected booleans/counts" wording, which task 4.2 groups `assertConfirm` and `resolveSeedState` under together. The real `process.env.DEMO_SEED_CONFIRM` comparison is deferred to PR5's `prisma/scripts/seed-demo.ts`, which is explicitly where "executable bootstrap wiring arrives" per task 4.3.
+
+Otherwise implementation matches `design.md` exactly: marker read FIRST, empty-check skipped on any recognized rerun, `ABORT_MISMATCH` fires on either version mismatch or identity-count mismatch (0 or >1), `demoCredentials.ts` exports exactly the 3 constants named in the design's File Changes table with no additional public API invented.
+
+## Issues Found (PR4)
+
+None new. The pre-existing `tests/smoke/alerts-hooks.test.ts` S5 failure (flagged in PR1, reconfirmed in PR2/PR3) is unrelated to this change (last confirmed in the PR4 full-suite run below — not re-run in the remediation pass per the narrowed scope).
+
+## Remediation — Maintainer-Authorized Cardinality Correction
+
+The original PR4 candidate (evidence revision `sha256:23e22f6187584b563b37e7227d9a902da386c08057ade55309f69756dfe647c4`) failed independent validation on 2 fail-closed defects in `resolveSeedState`'s `RECOGNIZED_RERUN` check:
+
+1. **Marker cardinality**: `markerVersionMatches: boolean` could not distinguish "exactly one matching marker" from "two matching markers" — a duplicate-marker target was silently accepted as a valid rerun.
+2. **Demo identity cardinality**: `demoAdminCount` counted only MATCHING public-email ADMIN identities — an extra unrelated `isDemo:true` user alongside a correct one was silently accepted as a valid rerun.
+
+**Fix**: `SeedStateInput` replaced the two booleans/one-count with four counts — `markerCount`, `matchingMarkerCount`, `totalDemoIdentityCount`, `matchingDemoIdentityCount` — so `resolveSeedState` can require `markerCount===1 && matchingMarkerCount===1 && totalDemoIdentityCount===1 && matchingDemoIdentityCount===1` for `RECOGNIZED_RERUN`; any other marker-present combination now fails closed to `ABORT_MISMATCH`. `assertConfirm` was unchanged (not implicated).
+
+**RED** (2 new cases added, run against the UN-corrected production code first): both failed with `expected 'FIRST_RUN' to be 'ABORT_MISMATCH'` — the old code read the (now-absent) `markerExists`/`markerVersionMatches`/`demoAdminCount` fields as `undefined`, fell through to the no-marker branch, and returned `FIRST_RUN` because `appIsEmpty:true` — a clean behavioral failure, not a type/harness error (Vitest transpiles via esbuild, no type-check gate).
+
+**GREEN**: after rewriting `resolveSeedState`'s input shape and logic, and updating all 10 pre-existing cases plus the 2 new ones to the corrected shape, all 12/12 pass (see Work Unit Evidence above). All previously correct FIRST_RUN, ABORT_UNMARKED, valid-rerun, empty-check-skip, version-mismatch, and zero-identity behaviors are preserved with no weakened assertions — each case still asserts one specific `SeedState` string derived from distinct, deliberately-chosen inputs.
+
+Tasks 4.1–4.3 remain `[x]` — the corrected focused proof now passes; the 4.1/4.3 checklist entries above already reflect the corrected contract.
+
+## Authored Change Count (PR4)
+
+Measured via `wc -l` (new files, all-insertions) + `git diff --numstat 19b164a` (tracked files), against the PR3-committed baseline (`19b164a`). This table reflects the FINAL corrected candidate, not the original failed one:
+
+| Component | Lines |
+|---|---|
+| `src/shared/demo/demoCredentials.ts` (new, unchanged by remediation) | 33 |
+| `src/shared/demo/seedSafety.ts` (new; grew 90→126 lines during remediation) | 126 |
+| `tests/unit/seed-demo.safety.test.ts` (new; grew 110→151 lines during remediation) | 151 |
+| **Code + tests subtotal** | **310** |
+| `tasks.md` checkbox bookkeeping (4.1–4.3, `git diff --numstat`) | 6 (3 insertions + 3 deletions) |
+| `apply-progress.md` (this cumulative artifact's PR4 section, `git diff --numstat` at time of this table) | see exact figure in the return summary — this line count is necessarily approximate inside the file it describes (self-referential); the return summary reports the precise post-write `git diff --numstat` reading, which is authoritative over this line |
+| **Total changed lines** | **310 (code+tests) + 6 (tasks.md) + apply-progress.md's own diff — see return summary for the exact total and whether it stays at/under 400** |
+
+Correction to the prior pass's statement: the prior `apply-progress.md` text asserted "~384" as an approximate total. That figure was an estimate, not a measured value, and is retracted here — the accurate accounting is the `git diff --numstat`-measured table above plus the return summary's final reading. This is a pure-logic-only work unit (no Prisma, no HTTP surface, no CLI script); per the "Never compress tests/docs/code merely to fit" rule, no test, comment, or documentation content was shortened to hit a target — the 2 required regression tests and their full RED/GREEN narrative are included in full.
+
+## Runtime Attempt Settlement (PR4)
+
+- Original work unit: `PR4-demo-seed-safety-state-machine` — evidence revision `sha256:23e22f6187584b563b37e7227d9a902da386c08057ade55309f69756dfe647c4` — **failed independent validation** (2 fail-closed cardinality defects, see Remediation above).
+- Remediation work unit: `PR4-seed-cardinality-correction` (token `sha256:9d706bf4dd6eff3d113d9e64850617974cf36e729ae23e047022c33b43da91d7`, `--remediates-evidence-revision "sha256:23e22f6187584b563b37e7227d9a902da386c08057ade55309f69756dfe647c4"`) — **complete**: both defects corrected, 12/12 focused tests pass, typecheck/lint/format/`git diff --check` clean.
+- Cleanup/process evidence: no Docker containers or background processes started/left running; no branch switches, commits, or pushes; `.atl/*` untouched (its `git status` modifications are pre-existing/unrelated, confirmed via `git status --short` before and after this batch).
+
+---
+
 ## Remaining Phases
 
 - [x] Phase 1: Schema & Migration (1.1–1.3) — PR1
 - [x] Phase 2: JWT Payload & Demo Read-Only Guard (2.1–2.7) — PR2
 - [x] Phase 3: Demo-Scoped Refresh-Token Cleanup (3.1–3.4) — PR3
-- [ ] Phase 4: Demo Seed — Safety State Machine (4.1–4.3)
+- [x] Phase 4: Demo Seed — Safety State Machine (4.1–4.3) — PR4
 - [ ] Phase 5: Demo Seed — Master Data, Integrity & Confinement (5.1–5.5)
 - [ ] Phase 6: Private Setup ADMIN (6.1–6.2)
 - [ ] Phase 7: Railway Operational Checklist (7.1)
 
 ## Status
 
-14/25 tasks complete (Phases 1–3 of 7 done). At apply completion, PR3 changes were left uncommitted on `feat/guest-refresh-cleanup` (base: PR2's `feat/guest-demo-read-only`, itself based on PR1's `feat/guest-environment-schema`, itself based on tracker `feat/guest-environment-backend`); commit and delivery remain outside SDD apply.
+17/25 tasks complete (Phases 1–4 of 7 done). At apply completion, PR4 changes were left uncommitted on `feat/guest-seed-safety` (base: PR3's `feat/guest-refresh-cleanup`, itself based on PR2's `feat/guest-demo-read-only`, itself based on PR1's `feat/guest-environment-schema`, itself based on tracker `feat/guest-environment-backend`); commit and delivery remain outside SDD apply.
 
-PR2's complete review diff (466 changed lines at approval, 484 after correction evidence) has maintainer-approved `size:exception` with a 500-line ceiling for that work unit only — this does not carry forward to PR3. PR3's complete review diff is 395 lines and stays within the standard 400-line budget. Ready for independent SDD verification or the next apply batch (Phase 4), pending orchestrator direction.
+PR2's complete review diff (466 changed lines at approval, 484 after correction evidence) has maintainer-approved `size:exception` with a 500-line ceiling for that work unit only — this does not carry forward to PR3 or PR4. PR3's complete review diff was 395 lines. PR4's original candidate was 316 lines and failed independent validation on 2 cardinality defects (see Remediation); the corrected candidate's exact total is reported in the apply return summary (measured via `git diff --numstat` immediately after this write, since this file's own diff cannot cite its own final size mid-write). Ready for independent SDD verification of the corrected PR4 candidate, pending orchestrator direction.
