@@ -25,9 +25,9 @@ No transactional-table seeding → every slice <400 ln; combined ~950–1100 ln 
 
 ## Phase 1: Schema & Migration
 
-- [ ] 1.1 `prisma/schema.prisma`: add `isDemo Boolean @default(false)` + `@@index([isDemo])` on `User`; add `DemoSeedMarker { id, version, createdAt }`.
-- [ ] 1.2 `prisma/migrations/<ts>_add_user_is_demo_and_demo_marker/migration.sql`: nullable ADD → backfill `false` → `SET NOT NULL DEFAULT false` → `CREATE INDEX`; `CREATE TABLE "DemoSeedMarker"` (match `20260704120000_add_entity_status` style).
-- [ ] 1.3 Set `isDemo:false` on `User` fixtures in `tests/smoke/auth.test.ts` and `tests/smoke/users.test.ts`.
+- [x] 1.1 `prisma/schema.prisma`: add `isDemo Boolean @default(false)` + `@@index([isDemo])` on `User`; add `DemoSeedMarker { id, version, createdAt }`.
+- [x] 1.2 `prisma/migrations/<ts>_add_user_is_demo_and_demo_marker/migration.sql`: nullable ADD → backfill `false` → `SET NOT NULL DEFAULT false` → `CREATE INDEX`; `CREATE TABLE "DemoSeedMarker"` (match `20260704120000_add_entity_status` style).
+- [x] 1.3 Set `isDemo:false` on `User` fixtures in `tests/smoke/auth.test.ts` and `tests/smoke/users.test.ts`.
 
 ## Phase 2: JWT Payload & Demo Read-Only Guard
 

@@ -83,6 +83,7 @@ const MOCK_USER_ACTIVE = {
   password: PASSWORD_HASH,
   role: 'ADMIN' as const,
   active: true,
+  isDemo: false,
   phone: null as string | null,
   createdAt: new Date('2026-01-01T00:00:00.000Z'),
   updatedAt: new Date('2026-01-01T00:00:00.000Z'),

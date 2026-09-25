@@ -69,37 +69,55 @@ const MANAGER_ID = 'cjld2cjxh0000qzrmn831i7rn';
 const OPERATOR_ID = 'cjld2cyuq0000t3rmniod1foy';
 const NEW_USER_ID = 'clh3xxk0h0001356c9a5oba8m';
 
-const MOCK_ADMIN: PublicUser & { password: string; updatedAt: Date; createdAt: Date } = {
+const MOCK_ADMIN: PublicUser & {
+  password: string;
+  updatedAt: Date;
+  createdAt: Date;
+  isDemo: boolean;
+} = {
   id: ADMIN_ID,
   fullName: 'Admin User',
   email: 'admin@highmeds.local',
   password: PASSWORD_HASH,
   role: 'ADMIN',
   active: true,
+  isDemo: false,
   phone: null,
   createdAt: new Date('2026-01-01T00:00:00.000Z'),
   updatedAt: new Date('2026-01-01T00:00:00.000Z'),
 };
 
-const MOCK_MANAGER: PublicUser & { password: string; updatedAt: Date; createdAt: Date } = {
+const MOCK_MANAGER: PublicUser & {
+  password: string;
+  updatedAt: Date;
+  createdAt: Date;
+  isDemo: boolean;
+} = {
   id: MANAGER_ID,
   fullName: 'Manager User',
   email: 'manager@highmeds.local',
   password: PASSWORD_HASH,
   role: 'MANAGER',
   active: true,
+  isDemo: false,
   phone: null,
   createdAt: new Date('2026-01-02T00:00:00.000Z'),
   updatedAt: new Date('2026-01-02T00:00:00.000Z'),
 };
 
-const MOCK_OPERATOR: PublicUser & { password: string; updatedAt: Date; createdAt: Date } = {
+const MOCK_OPERATOR: PublicUser & {
+  password: string;
+  updatedAt: Date;
+  createdAt: Date;
+  isDemo: boolean;
+} = {
   id: OPERATOR_ID,
   fullName: 'Operator User',
   email: 'operator@highmeds.local',
   password: PASSWORD_HASH,
   role: 'OPERATOR',
   active: true,
+  isDemo: false,
   phone: null,
   createdAt: new Date('2026-01-03T00:00:00.000Z'),
   updatedAt: new Date('2026-01-03T00:00:00.000Z'),
@@ -111,13 +129,19 @@ const MOCK_OPERATOR: PublicUser & { password: string; updatedAt: Date; createdAt
  * The requesting token is ADMIN2_TOKEN, targeting ADMIN_ID.
  * This keeps the self-guard from triggering (different user).
  */
-const MOCK_ADMIN2: PublicUser & { password: string; updatedAt: Date; createdAt: Date } = {
+const MOCK_ADMIN2: PublicUser & {
+  password: string;
+  updatedAt: Date;
+  createdAt: Date;
+  isDemo: boolean;
+} = {
   id: ADMIN2_ID,
   fullName: 'Second Admin',
   email: 'admin2@highmeds.local',
   password: PASSWORD_HASH,
   role: 'ADMIN',
   active: true,
+  isDemo: false,
   phone: null,
   createdAt: new Date('2026-01-04T00:00:00.000Z'),
   updatedAt: new Date('2026-01-04T00:00:00.000Z'),
@@ -239,6 +263,7 @@ describe('Users CRUD smoke tests', () => {
         password: data.password ?? '',
         role: (data.role as MockUser['role']) ?? 'OPERATOR',
         active: true,
+        isDemo: data.isDemo ?? false,
         phone: data.phone ?? null,
         createdAt: new Date(),
         updatedAt: new Date(),
