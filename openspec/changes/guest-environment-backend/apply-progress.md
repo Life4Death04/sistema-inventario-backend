@@ -1,6 +1,6 @@
-# Apply Progress: guest-environment-backend — PR1 + PR2
+# Apply Progress: guest-environment-backend — PR1 + PR2 + PR3
 
-<!-- Updated by sdd-apply | PR2 batch — merged with PR1 apply-progress (cumulative) -->
+<!-- Updated by sdd-apply | PR3 batch — merged with PR1+PR2 apply-progress (cumulative) -->
 
 ## Chain Strategy
 
@@ -165,11 +165,80 @@ No defect exposed by any check, so no code or test correction was made — this 
 
 ---
 
+# PR3 — Phase 3: Demo-Scoped Refresh-Token Cleanup
+
+Branch: `feat/guest-refresh-cleanup` (base: PR2's `feat/guest-demo-read-only`), per the `feature-branch-chain` strategy above.
+
+## Phase 3 Task Checklist ✅ COMPLETE
+
+- [x] 3.1 RED `tests/unit/auth.repository.test.ts` (new, 4 cases): asserts `deleteMany` is called with `where.userId` scoped to the exact caller, `where.OR` containing `{ revoked: true }` and an `expiresAt: { lt: <Date> now-bounded> }` clause (exactly 2 clauses, neither matching a live row), scope never leaks across two sequential calls with different userIds, and the resolved count is returned.
+- [x] 3.2 GREEN `src/modules/auth/auth.repository.ts`: added `pruneDeadRefreshTokens(userId): Promise<number>` = `deleteMany({ where: { userId, OR: [{revoked:true},{expiresAt:{lt:new Date()}}] } })`, returns `result.count`. Matches design.md's exact contract.
+- [x] 3.3 RED extended `tests/smoke/auth.test.ts` with a `describe('Demo-scoped refresh-token cleanup')` block (4 cases) plus an `insertDeadRow(userId, opts)` fixture helper and a `deleteMany` mock-store implementation mirroring the real Prisma `where` shape: (a) demo login prunes pre-seeded revoked+expired rows for that user while the freshly created active row survives; (b) two concurrent demo logins (session A + B) each hold a live row — session A refreshing rotates+prunes only its own dead row, session B's live row is untouched and B can still refresh (this is the required runtime harness: 2 logins + 1 refresh); (c) non-demo login with pre-seeded dead rows never calls `deleteMany` at all and leaves those rows in place; (d) `deleteMany` mocked to reject once — login still returns `200` with a valid token, and `logger.error` (spied via `vi.spyOn`) is asserted called.
+- [x] 3.4 GREEN `src/modules/auth/auth.controller.ts`: imported the shared `logger`; at both `loginController` and `refreshController`, immediately after the new `RefreshToken` row is created (`refreshTokenRow` / `newRow`), added `if (user.isDemo) { try { await authRepository.pruneDeadRefreshTokens(user.id); } catch (pruneErr) { logger.error({ err: pruneErr, userId: user.id }, '...') } }` — runs strictly after the live row exists, scoped to demo users only, failure logged and swallowed so the token response is never affected.
+
+## Files Touched (PR3)
+
+| File | Action | Details |
+|------|--------|---------|
+| `src/modules/auth/auth.repository.ts` | Modified | `pruneDeadRefreshTokens(userId)` (+22) |
+| `src/modules/auth/auth.controller.ts` | Modified | `logger` import; demo-scoped prune `try/catch` at both sign sites (+33) |
+| `tests/unit/auth.repository.test.ts` | Created | 4 cases — scoping, dead-only clauses, no cross-user leakage, return value; 99 lines |
+| `tests/smoke/auth.test.ts` | Modified | `deleteMany` mock wiring + `insertDeadRow` helper + `logger` import + `Demo-scoped refresh-token cleanup` describe block (4 cases) (+154) |
+| `openspec/changes/guest-environment-backend/tasks.md` | Modified | Phase 3 tasks 3.1–3.4 marked `[x]` |
+| `openspec/changes/guest-environment-backend/apply-progress.md` | Modified | This artifact — PR3 section merged with PR1+PR2 (cumulative) |
+
+## Work Unit Evidence (PR3)
+
+| Evidence | Result |
+|---|---|
+| **Focused test** `npx vitest run tests/unit/auth.repository.test.ts tests/smoke/auth.test.ts` | ✅ 40/40 passed (2 test files) — 4 in `auth.repository.test.ts`, 36 in `auth.test.ts` (including the 4 new cleanup cases) |
+| **RED confirmation** | `auth.repository.test.ts` run before 3.2: 4/4 failed with `pruneDeadRefreshTokens is not a function`. `auth.test.ts` cleanup block run before 3.4: 3/4 failed (dead rows not pruned, live-row count wrong, logger not called) — the 4th (non-demo untouched) passed both before and after, as expected for a negative assertion. |
+| **Typecheck** `npx tsc --noEmit` | ✅ clean, no output |
+| **Lint** `npx eslint src/modules/auth/auth.repository.ts src/modules/auth/auth.controller.ts tests/unit/auth.repository.test.ts tests/smoke/auth.test.ts` | ✅ clean after 1 fix: replaced `toHaveBeenNthCalledWith(n, expect.objectContaining(...))` with direct `mock.calls[n]` destructuring + assertions (`@typescript-eslint/no-unsafe-assignment` on `expect.objectContaining`'s `any` return) |
+| **Format** `npx prettier --check <same 4 files>` | ✅ "All matched files use Prettier code style!" — no rewrites needed |
+| **Runtime harness** supertest — `tests/smoke/auth.test.ts` "Demo-scoped refresh-token cleanup" case (b): two demo logins (session A, session B) each producing a live `RefreshToken` row, then session A calls `POST /api/auth/refresh` | ✅ refresh A → `200`; session A's OLD row (now revoked by rotation) is pruned by the post-issuance cleanup; session B's untouched live row survives (`refreshTokenStore.size` stays `2`: B's original + A's new rotated row); session B then independently calls `POST /api/auth/refresh` → `200`, proving the other session was never disturbed |
+| **Full suite** `npm test` | 383/384 passed. Same 1 pre-existing failure as PR1/PR2 in `tests/smoke/alerts-hooks.test.ts` (S5 reconcile assertion, expects 1 update got 2) — unrelated to this change, count grew from 376→384 baseline only because of the 8 new PR3 tests (4 unit + 4 smoke) |
+| **Rollback boundary** | `src/modules/auth/auth.repository.ts` (the `pruneDeadRefreshTokens` method — delete it), `src/modules/auth/auth.controller.ts` (the `logger` import and the two `if (user.isDemo) { try {...} catch {...} }` blocks), `tests/unit/auth.repository.test.ts` (new file — delete), and the PR3-specific additions to `tests/smoke/auth.test.ts` (`deleteMany` mock wiring, `insertDeadRow` helper, `logger` import, the `Demo-scoped refresh-token cleanup` describe block). All independently revertible without touching Phase 1–2 (already merged into this branch's base) or Phase 4+ (not yet started). |
+
+## Deviations from Design (PR3)
+
+None — implementation matches `design.md` exactly: `pruneDeadRefreshTokens` query shape is verbatim from the design's "File Changes" table; cleanup is placed strictly after `createRefreshToken` returns at both sign sites (data flow: `... → create RefreshToken → [isDemo? pruneDeadRefreshTokens(userId)] → respond`); failure is logged via the existing shared `logger` and swallowed, matching the same try/catch-and-log pattern already used in `inventory-movements.service.ts` for the alert-reconcile non-critical failure path.
+
+## Issues Found (PR3)
+
+None new. The pre-existing `tests/smoke/alerts-hooks.test.ts` S5 failure (flagged in PR1, reconfirmed in PR2) remains present and unrelated to this change — reconfirmed by the full-suite run above.
+
+## Authored Change Count (PR3)
+
+Measured via `git diff --numstat` (existing files) + `wc -l` (new file), against the PR2-committed baseline — additions/deletions, not a rough estimate:
+
+| Component | + | - |
+|---|---|---|
+| `src/modules/auth/auth.repository.ts` | 22 | 0 |
+| `src/modules/auth/auth.controller.ts` | 33 | 0 |
+| `tests/unit/auth.repository.test.ts` (new, 99 lines total) | 99 | 0 |
+| `tests/smoke/auth.test.ts` | 154 | 0 |
+| **Code + tests subtotal** | **308** | **0** |
+| `tasks.md` checkbox bookkeeping (3.1–3.4) | 4 | 4 |
+| `apply-progress.md` (this PR3 section, mandatory Work Unit Evidence) | 74 | 5 |
+| **Total changed lines (+ and - combined)** | | **395** |
+
+The final read-back measured 395 changed lines against the PR2-committed baseline, within the 400-line review budget; no `size:exception` is needed for PR3, and PR2's exception does not carry forward. The over-forecast size comes from the two-session smoke harness and complete RED/GREEN evidence, with source, tests, tasks, and progress all counted.
+
+## Runtime Attempt Settlement (PR3)
+
+- Work unit: `PR3-demo-refresh-token-cleanup`
+- State: **complete**
+- Evidence revision: `sha256:d0e6e27d2416097725cd447cac272497ed04a66773b3ea9228e52f92cfb8e021`
+- Cleanup/process evidence: no Docker containers or background processes started/left running; no branch switches, commits, or pushes; `.atl/*` untouched (its `git status` modifications are pre-existing/unrelated, confirmed via `git status --short` before and after this batch).
+
+---
+
 ## Remaining Phases
 
 - [x] Phase 1: Schema & Migration (1.1–1.3) — PR1
 - [x] Phase 2: JWT Payload & Demo Read-Only Guard (2.1–2.7) — PR2
-- [ ] Phase 3: Demo-Scoped Refresh-Token Cleanup (3.1–3.4)
+- [x] Phase 3: Demo-Scoped Refresh-Token Cleanup (3.1–3.4) — PR3
 - [ ] Phase 4: Demo Seed — Safety State Machine (4.1–4.3)
 - [ ] Phase 5: Demo Seed — Master Data, Integrity & Confinement (5.1–5.5)
 - [ ] Phase 6: Private Setup ADMIN (6.1–6.2)
@@ -177,6 +246,6 @@ No defect exposed by any check, so no code or test correction was made — this 
 
 ## Status
 
-10/25 tasks complete (Phases 1–2 of 7 done). At apply completion, PR2 changes were left uncommitted on `feat/guest-demo-read-only` (base: PR1's `feat/guest-environment-schema`, itself based on tracker `feat/guest-environment-backend`); commit and delivery remain outside SDD apply.
+14/25 tasks complete (Phases 1–3 of 7 done). At apply completion, PR3 changes were left uncommitted on `feat/guest-refresh-cleanup` (base: PR2's `feat/guest-demo-read-only`, itself based on PR1's `feat/guest-environment-schema`, itself based on tracker `feat/guest-environment-backend`); commit and delivery remain outside SDD apply.
 
-PR2's complete review diff (466 changed lines at approval, 484 after correction evidence) has maintainer-approved `size:exception` with a 500-line ceiling, superseding the original 400-line budget for this work unit only. The prior 400-line attempt passed all functional checks but was reset for incomplete line-count accounting; the exception-verification attempt (`PR2-jwt-demo-read-only-guard-size-exception`) re-confirmed all functional checks and settled **complete** at evidence revision `sha256:41c25e6b570c9b39ce53885be342e86a91b98d5a23071cddc017f417da832dbb`. Ready for independent SDD verification or the next apply batch (Phase 3), pending orchestrator direction.
+PR2's complete review diff (466 changed lines at approval, 484 after correction evidence) has maintainer-approved `size:exception` with a 500-line ceiling for that work unit only — this does not carry forward to PR3. PR3's complete review diff is 395 lines and stays within the standard 400-line budget. Ready for independent SDD verification or the next apply batch (Phase 4), pending orchestrator direction.

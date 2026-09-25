@@ -30,6 +30,7 @@ import jwt from 'jsonwebtoken';
 import { app } from '../../src/app.js';
 import { isAppError } from '../../src/shared/errors/AppError.js';
 import { requireRole } from '../../src/shared/middleware/requireRole.js';
+import logger from '../../src/shared/logger/index.js';
 
 // ── Response body types ───────────────────────────────────────────────────────
 
@@ -140,6 +141,23 @@ function makeRefreshTokenRow(userId: string): MockRefreshToken {
   };
 }
 
+/** Build and insert an already-dead (revoked and/or expired) row directly into the store. */
+function insertDeadRow(
+  userId: string,
+  opts: { revoked?: boolean; expired?: boolean },
+): MockRefreshToken {
+  const row = makeRefreshTokenRow(userId);
+  if (opts.revoked) {
+    row.revoked = true;
+    row.revokedAt = new Date();
+  }
+  if (opts.expired) {
+    row.expiresAt = new Date(Date.now() - 60_000);
+  }
+  refreshTokenStore.set(row.id, row);
+  return row;
+}
+
 // ── Mock Prisma ───────────────────────────────────────────────────────────────
 
 vi.mock('../../src/shared/utils/prisma.js', () => {
@@ -152,6 +170,7 @@ vi.mock('../../src/shared/utils/prisma.js', () => {
       findUnique: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
+      deleteMany: vi.fn(),
     },
     $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1 }]),
     $disconnect: vi.fn().mockResolvedValue(undefined),
@@ -222,6 +241,8 @@ describe('Auth endpoints smoke tests', () => {
     const mockRtUpdate = vi.mocked(prisma.refreshToken.update);
     // eslint-disable-next-line @typescript-eslint/unbound-method
     const mockRtUpdateMany = vi.mocked(prisma.refreshToken.updateMany);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const mockRtDeleteMany = vi.mocked(prisma.refreshToken.deleteMany);
 
     // User lookup by email or id.
     mockUserFindUnique.mockImplementation(
@@ -274,6 +295,26 @@ describe('Auth endpoints smoke tests', () => {
         for (const [id, row] of refreshTokenStore.entries()) {
           if (row.userId === where.userId && !row.revoked) {
             refreshTokenStore.set(id, { ...row, revoked: true, revokedAt: new Date() });
+            count++;
+          }
+        }
+        return Promise.resolve({ count });
+      },
+    );
+
+    // deleteMany (demo-scoped dead-row cleanup) — mirrors the real Prisma
+    // `where: { userId, OR: [{revoked:true},{expiresAt:{lt:now}}] }` query
+    // against the in-memory store, so tests can prove exact prune behavior.
+    mockRtDeleteMany.mockImplementation(
+      ({ where }: { where: { userId: string; OR: Array<Record<string, unknown>> } }) => {
+        let count = 0;
+        const now = Date.now();
+        for (const [id, row] of refreshTokenStore.entries()) {
+          if (row.userId !== where.userId) continue;
+          const isRevoked = row.revoked;
+          const isExpired = row.expiresAt.getTime() < now;
+          if (isRevoked || isExpired) {
+            refreshTokenStore.delete(id);
             count++;
           }
         }
@@ -811,6 +852,119 @@ describe('Auth endpoints smoke tests', () => {
       expect(body.error).not.toBe('DEMO_READ_ONLY');
       expect(res.status).toBe(400);
       expect(body.error).toBe('VALIDATION_ERROR');
+    });
+  });
+
+  // ── Demo-scoped refresh-token cleanup ──────────────────────────────────────
+  //
+  // Tests per tasks.md 3.3 + specs/auth/spec.md
+  // (Requirement: Demo-scoped refresh-token cleanup):
+  //   - cleanup runs post-issuance and prunes only dead rows
+  //   - concurrent live rows survive cleanup
+  //   - non-demo users are never subject to this pruning
+  //   - cleanup failure is logged but does not fail the auth response
+
+  describe('Demo-scoped refresh-token cleanup', () => {
+    it('(a) demo login prunes revoked/expired rows for that user, keeps the fresh active row', async () => {
+      const deadRevoked = insertDeadRow(MOCK_USER_DEMO.id, { revoked: true });
+      const deadExpired = insertDeadRow(MOCK_USER_DEMO.id, { expired: true });
+
+      const res = await request(app)
+        .post('/api/auth/login')
+        .send({ email: MOCK_USER_DEMO.email, password: PASSWORD_PLAIN });
+
+      expect(res.status).toBe(200);
+      const body = res.body as LoginBody;
+      expect(typeof body.token).toBe('string');
+
+      // Dead rows pruned...
+      expect(refreshTokenStore.has(deadRevoked.id)).toBe(false);
+      expect(refreshTokenStore.has(deadExpired.id)).toBe(false);
+
+      // ...but the freshly created active row from THIS login survives.
+      const liveRows = [...refreshTokenStore.values()].filter(
+        (row) => row.userId === MOCK_USER_DEMO.id,
+      );
+      expect(liveRows).toHaveLength(1);
+      expect(liveRows[0]?.revoked).toBe(false);
+    });
+
+    it('(b) concurrent live demo sessions survive cleanup triggered by another session refreshing', async () => {
+      // Session A login.
+      const loginA = await request(app)
+        .post('/api/auth/login')
+        .send({ email: MOCK_USER_DEMO.email, password: PASSWORD_PLAIN });
+      const cookieA = getCookieValue(
+        loginA.headers as Record<string, string | string[] | undefined>,
+        'refresh_token',
+      );
+
+      // Session B login — a second, distinct, live, unexpired row for the SAME demo user.
+      const loginB = await request(app)
+        .post('/api/auth/login')
+        .send({ email: MOCK_USER_DEMO.email, password: PASSWORD_PLAIN });
+      const cookieB = getCookieValue(
+        loginB.headers as Record<string, string | string[] | undefined>,
+        'refresh_token',
+      );
+
+      expect(refreshTokenStore.size).toBe(2);
+
+      // Session A refreshes — rotates its own row (old A becomes revoked = dead)
+      // and triggers demo cleanup. Session B's live row must NOT be touched.
+      const refreshA = await request(app).post('/api/auth/refresh').set('Cookie', cookieA);
+      expect(refreshA.status).toBe(200);
+
+      // Exactly session B's original live row + session A's new rotated row remain.
+      const remainingUserIds = [...refreshTokenStore.values()].map((row) => row.userId);
+      expect(remainingUserIds.every((id) => id === MOCK_USER_DEMO.id)).toBe(true);
+      expect(refreshTokenStore.size).toBe(2);
+
+      // Session B can still refresh with its untouched cookie.
+      const refreshB = await request(app).post('/api/auth/refresh').set('Cookie', cookieB);
+      expect(refreshB.status).toBe(200);
+    });
+
+    it('(c) non-demo login/refresh never triggers cleanup — dead rows are left untouched', async () => {
+      const deadRevoked = insertDeadRow(MOCK_USER_ACTIVE.id, { revoked: true });
+      const deadExpired = insertDeadRow(MOCK_USER_ACTIVE.id, { expired: true });
+
+      const { prisma } = await import('../../src/shared/utils/prisma.js');
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const mockRtDeleteMany = vi.mocked(prisma.refreshToken.deleteMany);
+
+      const res = await request(app)
+        .post('/api/auth/login')
+        .send({ email: MOCK_USER_ACTIVE.email, password: PASSWORD_PLAIN });
+
+      expect(res.status).toBe(200);
+      expect(mockRtDeleteMany).not.toHaveBeenCalled();
+      expect(refreshTokenStore.has(deadRevoked.id)).toBe(true);
+      expect(refreshTokenStore.has(deadExpired.id)).toBe(true);
+    });
+
+    it('(d) cleanup failure after successful issuance still returns the token and is logged', async () => {
+      const { prisma } = await import('../../src/shared/utils/prisma.js');
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const mockRtDeleteMany = vi.mocked(prisma.refreshToken.deleteMany);
+      mockRtDeleteMany.mockRejectedValueOnce(new Error('cleanup exploded'));
+
+      const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => logger);
+
+      const res = await request(app)
+        .post('/api/auth/login')
+        .send({ email: MOCK_USER_DEMO.email, password: PASSWORD_PLAIN });
+
+      // Login must still be reported as a success with a usable token.
+      expect(res.status).toBe(200);
+      const body = res.body as LoginBody;
+      expect(typeof body.token).toBe('string');
+      expect(body.user.id).toBe(MOCK_USER_DEMO.id);
+
+      // Failure must be observable via the logger, not silently swallowed.
+      expect(errorSpy).toHaveBeenCalled();
+
+      errorSpy.mockRestore();
     });
   });
 });

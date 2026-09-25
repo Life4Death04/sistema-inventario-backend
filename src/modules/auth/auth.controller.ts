@@ -19,6 +19,7 @@ import { authRepository } from './auth.repository.js';
 import { AppError } from '../../shared/errors/AppError.js';
 import { ERROR_CODES } from '../../shared/errors/errorCodes.js';
 import { env } from '../../config/env.js';
+import logger from '../../shared/logger/index.js';
 import type { LoginDto } from './auth.schema.js';
 
 // ── Cookie configuration ──────────────────────────────────────────────────────
@@ -120,6 +121,22 @@ export async function loginController(req: Request, res: Response): Promise<void
     ip: req.ip,
   });
 
+  // Demo-scoped cleanup: now that the new active row exists, prune this
+  // demo user's dead (revoked/expired) rows only. Never applies to
+  // non-demo users. Failure is logged and swallowed — it must never fail
+  // an otherwise-successful login (specs/auth/spec.md — Demo-scoped
+  // refresh-token cleanup).
+  if (user.isDemo) {
+    try {
+      await authRepository.pruneDeadRefreshTokens(user.id);
+    } catch (pruneErr: unknown) {
+      logger.error(
+        { err: pruneErr, userId: user.id },
+        '[auth.pruneDeadRefreshTokens] Demo refresh-token cleanup failed after login — swallowed.',
+      );
+    }
+  }
+
   // Sign both tokens.
   const accessToken = authService.signAccessToken(user.id, user.role, user.isDemo);
   const refreshTokenJwt = authService.signRefreshToken(user.id, refreshTokenRow.id);
@@ -199,6 +216,22 @@ export async function refreshController(req: Request, res: Response): Promise<vo
     userAgent: req.headers['user-agent'],
     ip: req.ip,
   });
+
+  // Demo-scoped cleanup: now that the new active row exists, prune this
+  // demo user's dead (revoked/expired) rows only. Never applies to
+  // non-demo users. Failure is logged and swallowed — it must never fail
+  // an otherwise-successful refresh (specs/auth/spec.md — Demo-scoped
+  // refresh-token cleanup).
+  if (user.isDemo) {
+    try {
+      await authRepository.pruneDeadRefreshTokens(user.id);
+    } catch (pruneErr: unknown) {
+      logger.error(
+        { err: pruneErr, userId: user.id },
+        '[auth.pruneDeadRefreshTokens] Demo refresh-token cleanup failed after refresh — swallowed.',
+      );
+    }
+  }
 
   const newAccessToken = authService.signAccessToken(user.id, user.role, user.isDemo);
   const newRefreshJwt = authService.signRefreshToken(user.id, newRow.id);

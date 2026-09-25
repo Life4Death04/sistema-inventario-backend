@@ -41,10 +41,10 @@ No transactional-table seeding → every slice <400 ln; combined ~950–1100 ln 
 
 ## Phase 3: Demo-Scoped Refresh-Token Cleanup
 
-- [ ] 3.1 RED `tests/unit/auth.repository.test.ts`: `pruneDeadRefreshTokens(userId)` deletes only revoked/expired rows scoped to `userId`.
-- [ ] 3.2 GREEN `auth.repository.ts`: add `pruneDeadRefreshTokens(userId)`.
-- [ ] 3.3 RED extend `tests/smoke/auth.test.ts`: cleanup runs post-issuance; concurrent live rows survive; non-demo skipped; cleanup throw→token still returned+logged.
-- [ ] 3.4 GREEN `auth.controller.ts`: `try/catch` prune call (existing logger) post row-creation, `isDemo`-only, both sign sites.
+- [x] 3.1 RED `tests/unit/auth.repository.test.ts`: `pruneDeadRefreshTokens(userId)` deletes only revoked/expired rows scoped to `userId`.
+- [x] 3.2 GREEN `auth.repository.ts`: add `pruneDeadRefreshTokens(userId)`.
+- [x] 3.3 RED extend `tests/smoke/auth.test.ts`: cleanup runs post-issuance; concurrent live rows survive; non-demo skipped; cleanup throw→token still returned+logged.
+- [x] 3.4 GREEN `auth.controller.ts`: `try/catch` prune call (existing logger) post row-creation, `isDemo`-only, both sign sites.
 
 ## Phase 4: Demo Seed — Safety State Machine
 
