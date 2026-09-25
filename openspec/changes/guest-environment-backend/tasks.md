@@ -54,10 +54,10 @@ No transactional-table seeding → every slice <400 ln; combined ~950–1100 ln 
 
 ## Phase 5: Demo Seed — Master Data, Integrity & Confinement
 
-- [ ] 5.1 RED `tests/unit/seed-demo.integrity.test.ts`: exactly one `isDemo:true` public ADMIN (`role:ADMIN`); every other user `isDemo:false`; new `Product` rows `stock:0`; `Supplier.rif` deterministic non-null (`J-<seq>`).
+- [x] 5.1 RED `tests/unit/seed-demo.integrity.test.ts`: exactly one `isDemo:true` public ADMIN (`role:ADMIN`); every other user `isDemo:false`; new `Product` rows `stock:0`; `Supplier.rif` deterministic non-null (`J-<seq>`).
 - [ ] 5.2 GREEN `prisma/scripts/seed-demo.ts` (new): wire `seedSafety.assertConfirm`/`resolveSeedState` with real marker read+empty-DB counts (10 models, excl. `_prisma_migrations`); on `FIRST_RUN`/`RECOGNIZED_RERUN` single `$transaction` — create `DemoSeedMarker` (first-run only), upsert `Category.name`/`Product.code`/`Supplier.rif`, bcrypt-hashed (cost 10) public ADMIN by `User.email`, `ProductSupplier` upsert by `@@unique([productId,supplierId])` with reference price, Product update omits `stock`; `ABORT_*`→zero writes.
-- [ ] 5.3 RED `tests/unit/seed-demo.non-destructive.test.ts`: before/after snapshot proves rerun leaves `Product.stock` and row counts/contents of `InventoryMovement`, `Alert`, `ReplenishmentRequest`, `ReplenishmentRequestItem` unchanged.
-- [ ] 5.4 RED `tests/unit/seed-demo.credential-isolation.test.ts`: `POST /api/users` (read-only) with `isDemo:true`/public email never persists `isDemo:true` (schema strips unknown field), duplicate email→`CONFLICT`; rerun matches entities by natural key — no duplicate Categories/Products/Suppliers, descriptive fields/`ProductSupplier` links may update.
+- [x] 5.3 RED `tests/unit/seed-demo.non-destructive.test.ts`: before/after snapshot proves rerun leaves `Product.stock` and row counts/contents of `InventoryMovement`, `Alert`, `ReplenishmentRequest`, `ReplenishmentRequestItem` unchanged.
+- [x] 5.4 RED `tests/unit/seed-demo.credential-isolation.test.ts`: `POST /api/users` (read-only) with `isDemo:true`/public email never persists `isDemo:true` (schema strips unknown field), duplicate email→`CONFLICT`; rerun matches entities by natural key — no duplicate Categories/Products/Suppliers, descriptive fields/`ProductSupplier` links may update.
 - [ ] 5.5 `package.json`: add `"db:seed:demo": "tsx prisma/scripts/seed-demo.ts"`.
 
 ## Phase 6: Private Setup ADMIN (`db:seed`)
