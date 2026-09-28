@@ -30,6 +30,7 @@ import jwt from 'jsonwebtoken';
 import { app } from '../../src/app.js';
 import { isAppError } from '../../src/shared/errors/AppError.js';
 import { requireRole } from '../../src/shared/middleware/requireRole.js';
+import logger from '../../src/shared/logger/index.js';
 
 // ── Response body types ───────────────────────────────────────────────────────
 
@@ -83,6 +84,7 @@ const MOCK_USER_ACTIVE = {
   password: PASSWORD_HASH,
   role: 'ADMIN' as const,
   active: true,
+  isDemo: false,
   phone: null as string | null,
   createdAt: new Date('2026-01-01T00:00:00.000Z'),
   updatedAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -100,6 +102,13 @@ const MOCK_USER_OPERATOR = {
   id: 'cuid-user-operator-003',
   email: 'operator@highmeds.local',
   role: 'OPERATOR' as const,
+};
+
+const MOCK_USER_DEMO = {
+  ...MOCK_USER_ACTIVE,
+  id: 'cuid-user-demo-004',
+  email: 'demo@highmeds.local',
+  isDemo: true,
 };
 
 // ── RefreshToken mock store ───────────────────────────────────────────────────
@@ -132,6 +141,23 @@ function makeRefreshTokenRow(userId: string): MockRefreshToken {
   };
 }
 
+/** Build and insert an already-dead (revoked and/or expired) row directly into the store. */
+function insertDeadRow(
+  userId: string,
+  opts: { revoked?: boolean; expired?: boolean },
+): MockRefreshToken {
+  const row = makeRefreshTokenRow(userId);
+  if (opts.revoked) {
+    row.revoked = true;
+    row.revokedAt = new Date();
+  }
+  if (opts.expired) {
+    row.expiresAt = new Date(Date.now() - 60_000);
+  }
+  refreshTokenStore.set(row.id, row);
+  return row;
+}
+
 // ── Mock Prisma ───────────────────────────────────────────────────────────────
 
 vi.mock('../../src/shared/utils/prisma.js', () => {
@@ -144,6 +170,7 @@ vi.mock('../../src/shared/utils/prisma.js', () => {
       findUnique: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
+      deleteMany: vi.fn(),
     },
     $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1 }]),
     $disconnect: vi.fn().mockResolvedValue(undefined),
@@ -153,9 +180,19 @@ vi.mock('../../src/shared/utils/prisma.js', () => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function makeAccessToken(userId: string, role: string): string {
+/**
+ * Craft an access JWT for tests.
+ *
+ * `isDemo` is intentionally optional (not defaulted to `false`): omitting it
+ * produces a "stale" token with NO isDemo claim at all — the exact shape of
+ * a token issued before this change — so tests can assert the verify-time
+ * default-to-false behavior distinctly from an explicit isDemo:false claim.
+ */
+function makeAccessToken(userId: string, role: string, isDemo?: boolean): string {
+  const payload: Record<string, unknown> = { sub: userId, role };
+  if (isDemo !== undefined) payload['isDemo'] = isDemo;
   return jwt.sign(
-    { sub: userId, role },
+    payload,
     process.env['JWT_ACCESS_SECRET'] ?? 'dev-access-secret-minimum-32-chars-ok',
     { algorithm: 'HS256', expiresIn: '15m' },
   );
@@ -204,6 +241,8 @@ describe('Auth endpoints smoke tests', () => {
     const mockRtUpdate = vi.mocked(prisma.refreshToken.update);
     // eslint-disable-next-line @typescript-eslint/unbound-method
     const mockRtUpdateMany = vi.mocked(prisma.refreshToken.updateMany);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const mockRtDeleteMany = vi.mocked(prisma.refreshToken.deleteMany);
 
     // User lookup by email or id.
     mockUserFindUnique.mockImplementation(
@@ -211,9 +250,11 @@ describe('Auth endpoints smoke tests', () => {
         if (where.email === MOCK_USER_ACTIVE.email) return Promise.resolve(MOCK_USER_ACTIVE);
         if (where.email === MOCK_USER_INACTIVE.email) return Promise.resolve(MOCK_USER_INACTIVE);
         if (where.email === MOCK_USER_OPERATOR.email) return Promise.resolve(MOCK_USER_OPERATOR);
+        if (where.email === MOCK_USER_DEMO.email) return Promise.resolve(MOCK_USER_DEMO);
         if (where.id === MOCK_USER_ACTIVE.id) return Promise.resolve(MOCK_USER_ACTIVE);
         if (where.id === MOCK_USER_INACTIVE.id) return Promise.resolve(MOCK_USER_INACTIVE);
         if (where.id === MOCK_USER_OPERATOR.id) return Promise.resolve(MOCK_USER_OPERATOR);
+        if (where.id === MOCK_USER_DEMO.id) return Promise.resolve(MOCK_USER_DEMO);
         return Promise.resolve(null);
       },
     );
@@ -254,6 +295,26 @@ describe('Auth endpoints smoke tests', () => {
         for (const [id, row] of refreshTokenStore.entries()) {
           if (row.userId === where.userId && !row.revoked) {
             refreshTokenStore.set(id, { ...row, revoked: true, revokedAt: new Date() });
+            count++;
+          }
+        }
+        return Promise.resolve({ count });
+      },
+    );
+
+    // deleteMany (demo-scoped dead-row cleanup) — mirrors the real Prisma
+    // `where: { userId, OR: [{revoked:true},{expiresAt:{lt:now}}] }` query
+    // against the in-memory store, so tests can prove exact prune behavior.
+    mockRtDeleteMany.mockImplementation(
+      ({ where }: { where: { userId: string; OR: Array<Record<string, unknown>> } }) => {
+        let count = 0;
+        const now = Date.now();
+        for (const [id, row] of refreshTokenStore.entries()) {
+          if (row.userId !== where.userId) continue;
+          const isRevoked = row.revoked;
+          const isExpired = row.expiresAt.getTime() < now;
+          if (isRevoked || isExpired) {
+            refreshTokenStore.delete(id);
             count++;
           }
         }
@@ -670,6 +731,240 @@ describe('Auth endpoints smoke tests', () => {
         expect(caught.code).toBe('INTERNAL_ERROR');
         expect(caught.statusCode).toBe(500);
       }
+    });
+  });
+
+  // ── Demo read-only guard (isDemo) ──────────────────────────────────────────
+  //
+  // Tests per tasks.md 2.6 + specs/auth/spec.md scenarios:
+  //   - demo GET passes
+  //   - demo POST/PUT/PATCH/DELETE → 403 DEMO_READ_ONLY
+  //   - non-demo unaffected
+  //   - demo login/refresh/logout usable
+  //   - stale token (no isDemo claim) is treated as non-demo
+  //
+  // Uses /api/users as the mutation surface: it is mounted behind
+  // `usersRouter.use(authenticate, requireRole('ADMIN'))`, so the demo
+  // ADMIN token used below has the role to pass requireRole — proving the
+  // 403 comes from the read-only guard itself, inside `authenticate`,
+  // BEFORE requireRole or the business handler ever run.
+
+  describe('Demo read-only guard (isDemo)', () => {
+    it('(a) demo GET /api/auth/me — 200 (safe method always allowed)', async () => {
+      const token = makeAccessToken(MOCK_USER_DEMO.id, MOCK_USER_DEMO.role, true);
+      const res = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(200);
+      const body = res.body as MeBody;
+      expect(body.user.id).toBe(MOCK_USER_DEMO.id);
+    });
+
+    it.each(['post', 'patch', 'delete', 'put'] as const)(
+      '(b) demo %s /api/users(/:id) — 403 DEMO_READ_ONLY, handler never runs',
+      async (method) => {
+        const token = makeAccessToken(MOCK_USER_DEMO.id, MOCK_USER_DEMO.role, true);
+        const path = method === 'post' ? '/api/users' : '/api/users/cuid-some-id';
+
+        const res = await request(app)[method](path).set('Authorization', `Bearer ${token}`);
+
+        expect(res.status).toBe(403);
+        const body = res.body as ErrorBody;
+        expect(body.error).toBe('DEMO_READ_ONLY');
+
+        // No Prisma user-mutation call was reached (handler never ran).
+        const { prisma } = await import('../../src/shared/utils/prisma.js');
+        // eslint-disable-next-line @typescript-eslint/unbound-method
+        expect(prisma.user.findUnique).not.toHaveBeenCalled();
+      },
+    );
+
+    it('(c) non-demo ADMIN POST /api/users is unaffected by the guard', async () => {
+      // No isDemo claim at all — an ordinary current-shape non-demo token.
+      const token = makeAccessToken(MOCK_USER_ACTIVE.id, MOCK_USER_ACTIVE.role, false);
+
+      const res = await request(app)
+        .post('/api/users')
+        .set('Authorization', `Bearer ${token}`)
+        .send({});
+
+      // Guard must NOT fire — request reaches body validation instead.
+      expect(res.status).not.toBe(403);
+      const body = res.body as ErrorBody;
+      expect(body.error).not.toBe('DEMO_READ_ONLY');
+      expect(res.status).toBe(400);
+      expect(body.error).toBe('VALIDATION_ERROR');
+    });
+
+    it('(d) demo account logs in — 200 with { user, token } and sets refresh cookie', async () => {
+      const res = await request(app)
+        .post('/api/auth/login')
+        .send({ email: MOCK_USER_DEMO.email, password: PASSWORD_PLAIN });
+
+      expect(res.status).toBe(200);
+      const body = res.body as LoginBody;
+      expect(body.user.id).toBe(MOCK_USER_DEMO.id);
+      expect(typeof body.token).toBe('string');
+      const cookieVal = getCookieValue(
+        res.headers as Record<string, string | string[] | undefined>,
+        'refresh_token',
+      );
+      expect(cookieVal).toBeTruthy();
+    });
+
+    it('(e) demo account refreshes then logs out — both remain usable', async () => {
+      const loginRes = await request(app)
+        .post('/api/auth/login')
+        .send({ email: MOCK_USER_DEMO.email, password: PASSWORD_PLAIN });
+      expect(loginRes.status).toBe(200);
+
+      const cookiePair = getCookieValue(
+        loginRes.headers as Record<string, string | string[] | undefined>,
+        'refresh_token',
+      );
+
+      const refreshRes = await request(app).post('/api/auth/refresh').set('Cookie', cookiePair);
+      expect(refreshRes.status).toBe(200);
+      const refreshBody = refreshRes.body as RefreshBody;
+      expect(typeof refreshBody.token).toBe('string');
+
+      const newCookiePair = getCookieValue(
+        refreshRes.headers as Record<string, string | string[] | undefined>,
+        'refresh_token',
+      );
+
+      const logoutRes = await request(app).post('/api/auth/logout').set('Cookie', newCookiePair);
+      expect(logoutRes.status).toBe(204);
+    });
+
+    it('(f) stale access token (no isDemo claim) is treated as non-demo — guard does not fire', async () => {
+      // Same demo user id, but the token itself carries no isDemo claim at
+      // all (pre-change token shape). verifyAccessToken must default it to
+      // false, so the read-only guard must NOT block this mutating request.
+      const staleToken = makeAccessToken(MOCK_USER_DEMO.id, MOCK_USER_DEMO.role);
+
+      const res = await request(app)
+        .post('/api/users')
+        .set('Authorization', `Bearer ${staleToken}`)
+        .send({});
+
+      expect(res.status).not.toBe(403);
+      const body = res.body as ErrorBody;
+      expect(body.error).not.toBe('DEMO_READ_ONLY');
+      expect(res.status).toBe(400);
+      expect(body.error).toBe('VALIDATION_ERROR');
+    });
+  });
+
+  // ── Demo-scoped refresh-token cleanup ──────────────────────────────────────
+  //
+  // Tests per tasks.md 3.3 + specs/auth/spec.md
+  // (Requirement: Demo-scoped refresh-token cleanup):
+  //   - cleanup runs post-issuance and prunes only dead rows
+  //   - concurrent live rows survive cleanup
+  //   - non-demo users are never subject to this pruning
+  //   - cleanup failure is logged but does not fail the auth response
+
+  describe('Demo-scoped refresh-token cleanup', () => {
+    it('(a) demo login prunes revoked/expired rows for that user, keeps the fresh active row', async () => {
+      const deadRevoked = insertDeadRow(MOCK_USER_DEMO.id, { revoked: true });
+      const deadExpired = insertDeadRow(MOCK_USER_DEMO.id, { expired: true });
+
+      const res = await request(app)
+        .post('/api/auth/login')
+        .send({ email: MOCK_USER_DEMO.email, password: PASSWORD_PLAIN });
+
+      expect(res.status).toBe(200);
+      const body = res.body as LoginBody;
+      expect(typeof body.token).toBe('string');
+
+      // Dead rows pruned...
+      expect(refreshTokenStore.has(deadRevoked.id)).toBe(false);
+      expect(refreshTokenStore.has(deadExpired.id)).toBe(false);
+
+      // ...but the freshly created active row from THIS login survives.
+      const liveRows = [...refreshTokenStore.values()].filter(
+        (row) => row.userId === MOCK_USER_DEMO.id,
+      );
+      expect(liveRows).toHaveLength(1);
+      expect(liveRows[0]?.revoked).toBe(false);
+    });
+
+    it('(b) concurrent live demo sessions survive cleanup triggered by another session refreshing', async () => {
+      // Session A login.
+      const loginA = await request(app)
+        .post('/api/auth/login')
+        .send({ email: MOCK_USER_DEMO.email, password: PASSWORD_PLAIN });
+      const cookieA = getCookieValue(
+        loginA.headers as Record<string, string | string[] | undefined>,
+        'refresh_token',
+      );
+
+      // Session B login — a second, distinct, live, unexpired row for the SAME demo user.
+      const loginB = await request(app)
+        .post('/api/auth/login')
+        .send({ email: MOCK_USER_DEMO.email, password: PASSWORD_PLAIN });
+      const cookieB = getCookieValue(
+        loginB.headers as Record<string, string | string[] | undefined>,
+        'refresh_token',
+      );
+
+      expect(refreshTokenStore.size).toBe(2);
+
+      // Session A refreshes — rotates its own row (old A becomes revoked = dead)
+      // and triggers demo cleanup. Session B's live row must NOT be touched.
+      const refreshA = await request(app).post('/api/auth/refresh').set('Cookie', cookieA);
+      expect(refreshA.status).toBe(200);
+
+      // Exactly session B's original live row + session A's new rotated row remain.
+      const remainingUserIds = [...refreshTokenStore.values()].map((row) => row.userId);
+      expect(remainingUserIds.every((id) => id === MOCK_USER_DEMO.id)).toBe(true);
+      expect(refreshTokenStore.size).toBe(2);
+
+      // Session B can still refresh with its untouched cookie.
+      const refreshB = await request(app).post('/api/auth/refresh').set('Cookie', cookieB);
+      expect(refreshB.status).toBe(200);
+    });
+
+    it('(c) non-demo login/refresh never triggers cleanup — dead rows are left untouched', async () => {
+      const deadRevoked = insertDeadRow(MOCK_USER_ACTIVE.id, { revoked: true });
+      const deadExpired = insertDeadRow(MOCK_USER_ACTIVE.id, { expired: true });
+
+      const { prisma } = await import('../../src/shared/utils/prisma.js');
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const mockRtDeleteMany = vi.mocked(prisma.refreshToken.deleteMany);
+
+      const res = await request(app)
+        .post('/api/auth/login')
+        .send({ email: MOCK_USER_ACTIVE.email, password: PASSWORD_PLAIN });
+
+      expect(res.status).toBe(200);
+      expect(mockRtDeleteMany).not.toHaveBeenCalled();
+      expect(refreshTokenStore.has(deadRevoked.id)).toBe(true);
+      expect(refreshTokenStore.has(deadExpired.id)).toBe(true);
+    });
+
+    it('(d) cleanup failure after successful issuance still returns the token and is logged', async () => {
+      const { prisma } = await import('../../src/shared/utils/prisma.js');
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const mockRtDeleteMany = vi.mocked(prisma.refreshToken.deleteMany);
+      mockRtDeleteMany.mockRejectedValueOnce(new Error('cleanup exploded'));
+
+      const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => logger);
+
+      const res = await request(app)
+        .post('/api/auth/login')
+        .send({ email: MOCK_USER_DEMO.email, password: PASSWORD_PLAIN });
+
+      // Login must still be reported as a success with a usable token.
+      expect(res.status).toBe(200);
+      const body = res.body as LoginBody;
+      expect(typeof body.token).toBe('string');
+      expect(body.user.id).toBe(MOCK_USER_DEMO.id);
+
+      // Failure must be observable via the logger, not silently swallowed.
+      expect(errorSpy).toHaveBeenCalled();
+
+      errorSpy.mockRestore();
     });
   });
 });

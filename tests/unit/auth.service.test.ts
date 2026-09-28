@@ -42,11 +42,38 @@ describe('AuthService — access token', () => {
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
     const role = 'ADMIN' as const;
 
-    const token = service.signAccessToken(userId, role);
+    const token = service.signAccessToken(userId, role, false);
     const payload = service.verifyAccessToken(token);
 
     expect(payload.sub).toBe(userId);
     expect(payload.role).toBe(role);
+    expect(payload.isDemo).toBe(false);
+  });
+
+  it('signAccessToken embeds isDemo:true when the caller passes isDemo=true', () => {
+    const userId = 'cuid-user-demo-1';
+    const role = 'ADMIN';
+
+    const token = service.signAccessToken(userId, role, true);
+    const payload = service.verifyAccessToken(token);
+
+    expect(payload.sub).toBe(userId);
+    expect(payload.role).toBe(role);
+    expect(payload.isDemo).toBe(true);
+  });
+
+  it('verifyAccessToken defaults isDemo to false when the claim is absent (stale token)', () => {
+    // Simulates a token issued before this change: no isDemo claim at all.
+    const staleToken = jwt.sign({ sub: 'cuid-user-stale', role: 'OPERATOR' }, ACCESS_SECRET, {
+      algorithm: 'HS256',
+      expiresIn: '15m',
+    });
+
+    const payload = service.verifyAccessToken(staleToken);
+
+    expect(payload.sub).toBe('cuid-user-stale');
+    expect(payload.role).toBe('OPERATOR');
+    expect(payload.isDemo).toBe(false);
   });
 
   it('verifyAccessToken throws TOKEN_EXPIRED on an expired token', () => {

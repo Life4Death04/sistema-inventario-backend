@@ -63,24 +63,24 @@ and enables hot reload via `tsx watch`.
 
 ## Scripts
 
-| Script         | Command                      | Purpose                                       |
-| -------------- | ---------------------------- | --------------------------------------------- |
-| `dev`          | `tsx watch src/server.ts`    | Start dev server with hot reload              |
-| `build`        | `tsc -p tsconfig.build.json` | Compile TypeScript to `dist/`                 |
-| `start`        | `node dist/server.js`        | Run compiled production build                 |
-| `lint`         | `eslint . --ext .ts`         | Check code for lint errors                    |
-| `lint:fix`     | `eslint . --ext .ts --fix`   | Auto-fix lint errors                          |
-| `format`       | `prettier --write .`         | Format all files                              |
-| `format:check` | `prettier --check .`         | Verify formatting (CI)                        |
-| `typecheck`    | `tsc --noEmit`               | Type-check without emitting files             |
-| `test`         | `vitest run`                 | Run all tests once                            |
-| `test:watch`   | `vitest`                     | Run tests in watch mode                       |
-| `db:migrate`   | `prisma migrate dev`         | Run pending Prisma migrations (development)    |
-| `migrate:deploy` | `prisma migrate deploy`    | Apply committed migrations (production deploy) |
-| `db:seed`      | `prisma db seed`             | Seed the database (admin user)                |
-| `db:reset`     | `prisma migrate reset`       | Reset DB and re-run all migrations            |
-| `db:studio`    | `prisma studio`              | Open Prisma Studio GUI                        |
-| `prepare`      | `husky`                      | Install Husky git hooks (auto on npm install) |
+| Script           | Command                      | Purpose                                        |
+| ---------------- | ---------------------------- | ---------------------------------------------- |
+| `dev`            | `tsx watch src/server.ts`    | Start dev server with hot reload               |
+| `build`          | `tsc -p tsconfig.build.json` | Compile TypeScript to `dist/`                  |
+| `start`          | `node dist/server.js`        | Run compiled production build                  |
+| `lint`           | `eslint . --ext .ts`         | Check code for lint errors                     |
+| `lint:fix`       | `eslint . --ext .ts --fix`   | Auto-fix lint errors                           |
+| `format`         | `prettier --write .`         | Format all files                               |
+| `format:check`   | `prettier --check .`         | Verify formatting (CI)                         |
+| `typecheck`      | `tsc --noEmit`               | Type-check without emitting files              |
+| `test`           | `vitest run`                 | Run all tests once                             |
+| `test:watch`     | `vitest`                     | Run tests in watch mode                        |
+| `db:migrate`     | `prisma migrate dev`         | Run pending Prisma migrations (development)    |
+| `migrate:deploy` | `prisma migrate deploy`      | Apply committed migrations (production deploy) |
+| `db:seed`        | `prisma db seed`             | Seed the database (admin user)                 |
+| `db:reset`       | `prisma migrate reset`       | Reset DB and re-run all migrations             |
+| `db:studio`      | `prisma studio`              | Open Prisma Studio GUI                         |
+| `prepare`        | `husky`                      | Install Husky git hooks (auto on npm install)  |
 
 ---
 
@@ -174,13 +174,13 @@ The contract declares:
 
 Set these on the Railway backend service before the first deploy:
 
-| Variable             | Value                                                                  |
-| -------------------- | ---------------------------------------------------------------------- |
-| `NODE_ENV`           | `production`                                                           |
-| `DATABASE_URL`       | Reference to the Railway PostgreSQL service connection string          |
+| Variable             | Value                                                                   |
+| -------------------- | ----------------------------------------------------------------------- |
+| `NODE_ENV`           | `production`                                                            |
+| `DATABASE_URL`       | Reference to the Railway PostgreSQL service connection string           |
 | `JWT_ACCESS_SECRET`  | Independently generated secret (≥ 32 chars) — `openssl rand -base64 48` |
-| `JWT_REFRESH_SECRET` | A **different** independently generated secret (≥ 32 chars)            |
-| `FRONTEND_URL`       | Exact production frontend origin (the localhost fallback is dev-only)  |
+| `JWT_REFRESH_SECRET` | A **different** independently generated secret (≥ 32 chars)             |
+| `FRONTEND_URL`       | Exact production frontend origin (the localhost fallback is dev-only)   |
 
 Optional overrides (`JWT_ACCESS_TTL`, `JWT_REFRESH_TTL`, `BCRYPT_COST`, `RATE_LIMIT_MAX`,
 `RATE_LIMIT_WINDOW_MS`, `LOG_LEVEL`) follow the same defaults documented above. `PORT` is

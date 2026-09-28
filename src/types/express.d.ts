@@ -20,6 +20,11 @@ declare global {
       user?: {
         id: string;
         role: UserRole;
+        /**
+         * True when the token belongs to the shared read-only demo account.
+         * Populated by `authenticate` from the verified access-token claim.
+         */
+        isDemo: boolean;
       };
     }
   }
