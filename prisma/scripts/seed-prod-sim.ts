@@ -13,18 +13,17 @@
  *   - THIS script (db:seed:sim)         → rich staff/catalog/history dataset for
  *                                         demoing a "production-like" environment.
  *
- * This script does NOT create a DemoSeedMarker or any rerun safeguard. Use it
- * only with a fresh, disposable database. Re-running it is not supported: the
- * replenishment requests are created again on each execution.
- *
  * All 9 staff users share the password provided through SEED_SIM_STAFF_PASSWORD
  * (isDemo:false).
+ * The read-only demo administrator uses SEED_SIM_DEMO_PASSWORD (isDemo:true):
+ * demouser@highmeds.prod.
  *
  * No Alert rows are seeded — several products sit at/below minStock on purpose,
  * so alerts can be generated from normal inventory use instead.
  *
  * Usage:
  *   Set SEED_SIM_STAFF_PASSWORD to the shared staff password.
+ *   Set SEED_SIM_DEMO_PASSWORD to the demo administrator password.
  *   npm run db:seed:sim
  */
 
@@ -34,13 +33,12 @@ import { PrismaClient, UserRole, ProductUnit, ReplenishmentStatus } from '@prism
 
 const BCRYPT_COST = 10;
 const SIMULATED_STAFF_PASSWORD_ENV = 'SEED_SIM_STAFF_PASSWORD';
+const SIMULATED_DEMO_PASSWORD_ENV = 'SEED_SIM_DEMO_PASSWORD';
 
-function resolveSimulatedStaffPassword(): string {
-  const password = process.env[SIMULATED_STAFF_PASSWORD_ENV];
+function resolveRequiredPassword(envName: string): string {
+  const password = process.env[envName];
   if (!password?.trim()) {
-    throw new Error(
-      `${SIMULATED_STAFF_PASSWORD_ENV} must be set to a non-empty value before seeding.`,
-    );
+    throw new Error(`${envName} must be set to a non-empty value before seeding.`);
   }
 
   return password;
@@ -211,6 +209,14 @@ const staffUsers = [
   },
 ];
 
+const demoUser = {
+  fullName: 'Demo Administrator',
+  email: 'demouser@highmeds.prod',
+  role: UserRole.ADMIN,
+  active: true,
+  isDemo: true,
+};
+
 const products = [
   {
     code: 'MED-0102',
@@ -364,11 +370,13 @@ const replenishmentRequests = [
  * Exported so it can be invoked/tested without the CLI side effects.
  */
 export async function main(prisma: PrismaClient): Promise<void> {
-  const simulatedStaffPassword = resolveSimulatedStaffPassword();
+  const simulatedStaffPassword = resolveRequiredPassword(SIMULATED_STAFF_PASSWORD_ENV);
+  const simulatedDemoPassword = resolveRequiredPassword(SIMULATED_DEMO_PASSWORD_ENV);
 
   console.log('🌱  Seeding production-simulation dataset…');
 
   const staffPassword = await bcrypt.hash(simulatedStaffPassword, BCRYPT_COST);
+  const demoPassword = await bcrypt.hash(simulatedDemoPassword, BCRYPT_COST);
 
   await prisma.$transaction(async (tx) => {
     const categoryIdsByName = new Map<string, string>();
@@ -435,7 +443,27 @@ export async function main(prisma: PrismaClient): Promise<void> {
       userIdsByEmail.set(u.email, user.id);
     }
 
-    // 4. Products
+    // 4. Read-only demo administrator — not used by replenishment requests.
+    await tx.user.upsert({
+      where: { email: demoUser.email },
+      update: {
+        fullName: demoUser.fullName,
+        role: demoUser.role,
+        active: demoUser.active,
+        isDemo: demoUser.isDemo,
+        password: demoPassword,
+      },
+      create: {
+        fullName: demoUser.fullName,
+        email: demoUser.email,
+        role: demoUser.role,
+        active: demoUser.active,
+        isDemo: demoUser.isDemo,
+        password: demoPassword,
+      },
+    });
+
+    // 5. Products
     for (const p of products) {
       const categoryId = categoryIdsByName.get(p.categoryName);
       if (!categoryId) throw new Error(`Missing seeded category: ${p.categoryName}`);
@@ -476,7 +504,7 @@ export async function main(prisma: PrismaClient): Promise<void> {
       productIdsByCode.set(p.code, product.id);
     }
 
-    // 5. Product ⇄ Supplier links
+    // 6. Product ⇄ Supplier links
     for (const ps of productSuppliers) {
       const productId = productIdsByCode.get(ps.productCode);
       const supplierId = supplierIdsByRif.get(ps.supplierRif);
@@ -490,7 +518,7 @@ export async function main(prisma: PrismaClient): Promise<void> {
       });
     }
 
-    // 6. Replenishment requests + items
+    // 7. Replenishment requests + items
     for (const r of replenishmentRequests) {
       const supplierId = supplierIdsByRif.get(r.supplierRif);
       const requestedByUserId = userIdsByEmail.get(r.requestedByEmail);
@@ -533,11 +561,12 @@ export async function main(prisma: PrismaClient): Promise<void> {
 
   console.log(
     `✅  Production-simulation seed complete: ${categories.length} categories, ` +
-      `${suppliers.length} suppliers, ${staffUsers.length} staff users, ` +
+      `${suppliers.length} suppliers, ${staffUsers.length} staff users, 1 demo administrator, ` +
       `${products.length} products, ${productSuppliers.length} product-supplier links, ` +
       `${replenishmentRequests.length} replenishment requests.`,
   );
   console.log(`   Staff login: any @highmeds.com email / ${SIMULATED_STAFF_PASSWORD_ENV}`);
+  console.log(`   Demo administrator: ${demoUser.email} / ${SIMULATED_DEMO_PASSWORD_ENV}`);
 }
 
 // ---------------------------------------------------------------------------
