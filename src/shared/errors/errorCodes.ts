@@ -48,6 +48,13 @@ export const ERROR_CODES = {
   /** Token is valid but the role is insufficient for this route. */
   FORBIDDEN: 'FORBIDDEN',
 
+  /**
+   * The authenticated account is the shared read-only demo user and the
+   * request used a mutating HTTP method (anything other than GET/HEAD/OPTIONS).
+   * 403 — enforced universally at the `authenticate` chokepoint.
+   */
+  DEMO_READ_ONLY: 'DEMO_READ_ONLY',
+
   /** Requested resource does not exist. */
   NOT_FOUND: 'NOT_FOUND',
 

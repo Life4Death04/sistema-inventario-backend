@@ -85,6 +85,7 @@ model User {
   role      UserRole     @default(OPERATOR)
   active    Boolean      @default(true)
   status    EntityStatus @default(ACTIVE) // additive — active preserved; swap in Slice B commit 2
+  isDemo    Boolean      @default(false) // guest-environment-backend — read-only demo account marker
   phone     String?
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
@@ -100,6 +101,16 @@ model User {
   @@index([active])
   @@index([role])
   @@index([status])
+  @@index([isDemo])
+}
+
+/// Persisted sentinel proving `db:seed:demo` has bootstrapped this database.
+/// Single-row marker, checked independently of the demo email/DB name.
+/// Introduced by guest-environment-backend for the seed safety state machine.
+model DemoSeedMarker {
+  id        String   @id @default(cuid())
+  version   String // matches DEMO_MARKER_VERSION; mismatch fails closed
+  createdAt DateTime @default(now())
 }
 
 /// JWT refresh token DB allowlist.

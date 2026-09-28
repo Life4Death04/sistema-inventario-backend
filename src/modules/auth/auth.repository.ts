@@ -100,6 +100,28 @@ export class AuthRepository {
       data: { revoked: true, revokedAt: new Date() },
     });
   }
+
+  /**
+   * Delete a single user's DEAD RefreshToken rows only.
+   *
+   * Dead = already `revoked: true` OR already past `expiresAt`. Scoped
+   * strictly to `userId` — never a global sweep — so other users' rows
+   * (including their live sessions) are never touched. The caller MUST
+   * invoke this only AFTER the new active row for this request has been
+   * created, so a live session can never be removed by this cleanup.
+   * (design.md — Demo-scoped refresh-token cleanup; specs/auth/spec.md)
+   *
+   * @returns Number of rows deleted.
+   */
+  async pruneDeadRefreshTokens(userId: string): Promise<number> {
+    const result = await prisma.refreshToken.deleteMany({
+      where: {
+        userId,
+        OR: [{ revoked: true }, { expiresAt: { lt: new Date() } }],
+      },
+    });
+    return result.count;
+  }
 }
 
 /** Singleton instance used by the auth controller. */
